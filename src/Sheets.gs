@@ -9,6 +9,7 @@ const SETTING_DEFS = [
   { key: 'leagueSets', label: 'リーグ戦のセット数', def: 3, type: 'sets', desc: '3 = 3セットマッチ（2セット先取）' },
   { key: 'upperSets', label: '上位トーナメントのセット数', def: 5, type: 'sets', desc: '5 = 5セットマッチ（3セット先取）' },
   { key: 'lowerSets', label: '下位トーナメントのセット数', def: 3, type: 'sets', desc: '3 = 3セットマッチ（2セット先取）' },
+  { key: 'tableCount', label: '台の数', def: 4, type: 'int', desc: 'トーナメントで使う卓球台の数。空いた台に次の試合を自動で割り当てます' },
   { key: 'advanceCount', label: '上位トーナメント進出人数（各リーグ）', def: 2, type: 'int', desc: '各リーグの上位何名が上位トーナメントに進むか' },
   { key: 'autoAssignLate', label: '遅れて来た選手をリーグに自動追加', def: true, type: 'bool', desc: 'TRUE なら、リーグ作成後に参加・支払確認が付いた選手を人数の少ないリーグへ自動で追加します（くじ番号が空欄なら自動で付けます）' },
   { key: 'adminPassword', label: '管理者パスワード', def: 'admin', type: 'string', desc: 'Web の管理者メニューに入るためのパスワード。必ず変更してください' },
@@ -89,6 +90,9 @@ function setupSheets_() {
   }
   sh.getRange(2, MCOL.SET0 + 1, Math.max(sh.getMaxRows() - 1, 1), MAX_SETS).setNumberFormat('@');
 
+  // トーナメント（システムが書き込む）
+  tourSheet_(true);
+
   // 順位（システムが書き込む）
   sh = ss.getSheetByName(SHEET.STANDINGS) || ss.insertSheet(SHEET.STANDINGS);
   if (sh.getLastRow() === 0) {
@@ -148,7 +152,7 @@ function normalizeSetting_(d, v) {
 /** 入力値チェック。エラーなら例外。 */
 function validateSettings_(s) {
   const errs = [];
-  ['leagueCount', 'playersPerLeague', 'advanceCount'].forEach(function (k) {
+  ['leagueCount', 'playersPerLeague', 'advanceCount', 'tableCount'].forEach(function (k) {
     if (!(Number.isInteger(s[k]) && s[k] >= 1)) errs.push(labelOf_(k) + ' は 1 以上の整数で入力してください');
   });
   ['leagueSets', 'upperSets', 'lowerSets'].forEach(function (k) {

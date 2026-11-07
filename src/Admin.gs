@@ -59,6 +59,21 @@ function adminGetData(tid, pw, autoAdded) {
       };
     }),
     resultCount: matches.filter(function (m) { return m.status !== STATUS.NONE; }).length,
+    leaguesComplete: leagueRows.length > 0 && matches.length > 0 && matches.every(function (m) { return m.status === STATUS.DONE; }),
+    tour: (function () {
+      const ms = readTMatches_();
+      if (!ms.length) return null;
+      const cnt = function (type) {
+        const r1 = ms.filter(function (m) { return m.type === type && m.round === 1; });
+        const real = ms.filter(function (m) { return m.type === type && m.status !== TSTATUS.BYE; });
+        return {
+          players: r1.reduce(function (n, m) { return n + (m.p1 ? 1 : 0) + (m.p2 ? 1 : 0); }, 0),
+          total: real.length,
+          done: real.filter(function (m) { return m.status === TSTATUS.DONE; }).length,
+        };
+      };
+      return { upper: cnt(TTYPE.UPPER), lower: cnt(TTYPE.LOWER) };
+    })(),
     unassigned: elig.filter(function (p) { return assigned[p.num] === undefined; }).map(pick_),
   });
 }
@@ -79,6 +94,7 @@ function adminSaveSettings(tid, pw, input) {
   checkAdmin_(pw);
   const next = saveSettings_(input);
   if (next.title) updateTournament_(tid, { name: next.title });
+  if (tourExists_()) reassignTables_(next); // 台の数が変わったら割り当てをやり直す
   clearCache_();
   return adminGetData(tid, isMaster_(pw) ? pw : next.adminPassword);
 }
@@ -111,6 +127,15 @@ function adminAutoAssignLate(tid, pw) {
   checkAdmin_(pw);
   const res = autoAssignLatePlayers_();
   return adminGetData(tid, pw, res.added.length ? res.added : [{ none: true }]);
+}
+
+/** 画面の設定値を保存してから、上位・下位トーナメントを作成する */
+function adminCreateBrackets(tid, pw, input, force) {
+  useTournament_(tid);
+  checkAdmin_(pw);
+  const s = input ? saveSettings_(input) : getSettings_();
+  if (input && s.title) updateTournament_(tid, { name: s.title });
+  return JSON.stringify(createBrackets_(s, !!force));
 }
 
 function adminExportStandings(tid, pw) {
@@ -312,6 +337,7 @@ function lateCandidates_(players, leagueRows) {
 function autoAssignLatePlayers_() {
   const settings = getSettings_();
   if (!settings.autoAssignLate) return { added: [] };
+  if (tourExists_()) return { added: [] }; // トーナメント作成後はリーグを変更しない
   if (!lateCandidates_(readPlayers_(), readLeagueRows_()).length) return { added: [] };
 
   const lock = LockService.getScriptLock();

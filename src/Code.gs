@@ -8,6 +8,7 @@ const SHEET = {
   LEAGUES: 'リーグ',
   MATCHES: '試合',
   STANDINGS: '順位',
+  TOUR: 'トーナメント',
 };
 
 const STATUS = {
@@ -17,7 +18,7 @@ const STATUS = {
 };
 
 /** 画面の下に表示するバージョン（デプロイが更新されているかの確認用） */
-const APP_VERSION = '2.3（名前に所属を表示）';
+const APP_VERSION = '3.0（トーナメント）';
 
 /** 1試合で記録できる最大セット数（7セットマッチまで対応） */
 const MAX_SETS = 7;

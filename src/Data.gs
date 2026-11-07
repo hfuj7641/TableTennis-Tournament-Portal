@@ -14,6 +14,7 @@ function ck_(key) {
   return (CTX.tid || 'bound') + ':' + key;
 }
 const MAX_LEAGUES_CACHE = 100;
+const CACHE_KEY_TOUR = 'tour_v1';
 
 function buildSnapshot_(opt) {
   opt = opt || {};
@@ -21,6 +22,7 @@ function buildSnapshot_(opt) {
   const players = opt.players || readPlayers_();
   const leagueRows = opt.leagueRows || readLeagueRows_();
   const matches = opt.matches || valuesToMatches_(readMatchValues_());
+  const tmatches = opt.tmatches || readTMatches_();
 
   const byNum = {};
   players.forEach(function (p) {
@@ -63,10 +65,27 @@ function buildSnapshot_(opt) {
   });
   bootPlayers.sort(function (a, b) { return a.num - b.num; });
 
+  const tour = buildTourData_(tmatches, settings, byNum);
+  const tourOf = {};
+  if (tour.exists) {
+    tmatches.forEach(function (m) {
+      if (m.round !== 1) return;
+      if (m.p1) tourOf[m.p1] = m.type;
+      if (m.p2) tourOf[m.p2] = m.type;
+    });
+    bootPlayers.forEach(function (p) { p.tour = tourOf[p.num] || ''; });
+  }
+  const tourSummary = function (b) {
+    return b ? { players: b.players, total: b.total, done: b.done, champion: b.champion, bestOf: b.bestOf } : null;
+  };
+
   return {
     leagueList: leagueList,
     leagues: leagues,
+    tour: tour,
     boot: {
+      hasTournament: !!tour.exists,
+      tour: tour.exists ? { upper: tourSummary(tour.upper), lower: tourSummary(tour.lower), tables: tour.tables } : null,
       title: settings.title,
       leagueSets: settings.leagueSets,
       advanceCount: settings.advanceCount,
@@ -82,6 +101,7 @@ function putSnapshotCache_(snap) {
   const cache = CacheService.getScriptCache();
   const items = {};
   items[ck_(CACHE_KEY_BOOT)] = JSON.stringify(snap.boot);
+  items[ck_(CACHE_KEY_TOUR)] = JSON.stringify(snap.tour);
   snap.leagueList.forEach(function (no) {
     items[ck_(CACHE_KEY_LEAGUE + no)] = JSON.stringify(snap.leagues[no]);
   });
@@ -94,7 +114,7 @@ function putSnapshotCache_(snap) {
 }
 
 function clearCache_() {
-  const keys = [ck_(CACHE_KEY_BOOT)];
+  const keys = [ck_(CACHE_KEY_BOOT), ck_(CACHE_KEY_TOUR)];
   for (let i = 1; i <= MAX_LEAGUES_CACHE; i++) keys.push(ck_(CACHE_KEY_LEAGUE + i));
   CacheService.getScriptCache().removeAll(keys);
 }
@@ -109,7 +129,8 @@ function buildFreshSnapshot_() {
   const settings = getSettings_();
   const players = readPlayers_();
   const leagueRows = readLeagueRows_();
-  if (settings.autoAssignLate && lateCandidates_(players, leagueRows).length) {
+  const tmatches = readTMatches_();
+  if (!tmatches.length && settings.autoAssignLate && lateCandidates_(players, leagueRows).length) {
     try {
       const res = autoAssignLatePlayers_();
       if (res.snap) return res.snap;
@@ -117,7 +138,7 @@ function buildFreshSnapshot_() {
       console.warn('auto assign failed: ' + err);
     }
   }
-  return buildSnapshot_({ settings: settings, players: players, leagueRows: leagueRows });
+  return buildSnapshot_({ settings: settings, players: players, leagueRows: leagueRows, tmatches: tmatches });
 }
 
 function getBootJson_() {
@@ -126,6 +147,15 @@ function getBootJson_() {
   const snap = buildFreshSnapshot_();
   putSnapshotCache_(snap);
   return JSON.stringify(snap.boot);
+}
+
+/** トーナメントのデータ（JSON 文字列） */
+function getTourJson_() {
+  const cached = CacheService.getScriptCache().get(ck_(CACHE_KEY_TOUR));
+  if (cached) return cached;
+  const snap = buildFreshSnapshot_();
+  putSnapshotCache_(snap);
+  return JSON.stringify(snap.tour);
 }
 
 /** リーグのデータ（JSON 文字列） */

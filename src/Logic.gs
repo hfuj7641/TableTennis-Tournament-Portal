@@ -165,17 +165,7 @@ function computeStandings_(players, matches, advanceCount) {
     s.ratio = s.setsLost ? s.setsWon / s.setsLost : 0;
   });
 
-  // 小数の誤差を避けるため、比較は掛け算で行う
-  const primary = function (x, y) {
-    const d1 = y.wins * Math.max(x.played, 1) - x.wins * Math.max(y.played, 1);
-    if (d1) return d1;
-    if (x.ratioInf !== y.ratioInf) return x.ratioInf ? -1 : 1;
-    if (!x.ratioInf) {
-      const d2 = y.setsWon * Math.max(x.setsLost, 1) - x.setsWon * Math.max(y.setsLost, 1);
-      if (d2) return d2;
-    }
-    return y.setsWon - x.setsWon;
-  };
+  const primary = recordCompare_;
 
   list.sort(function (x, y) { return primary(x, y) || x.num - y.num; });
 
@@ -201,6 +191,21 @@ function computeStandings_(players, matches, advanceCount) {
     pos += tier.length;
   });
   return out;
+}
+
+/**
+ * 成績の比較（負なら x が上）: 勝率 → セット率（失セット0は∞）→ 獲得セット数
+ * 小数の誤差を避けるため、比較は掛け算で行う
+ */
+function recordCompare_(x, y) {
+  const d1 = y.wins * Math.max(x.played, 1) - x.wins * Math.max(y.played, 1);
+  if (d1) return d1;
+  if (!!x.ratioInf !== !!y.ratioInf) return x.ratioInf ? -1 : 1;
+  if (!x.ratioInf) {
+    const d2 = y.setsWon * Math.max(x.setsLost, 1) - x.setsWon * Math.max(y.setsLost, 1);
+    if (d2) return d2;
+  }
+  return y.setsWon - x.setsWon;
 }
 
 /** 同じ成績の選手群を、その選手間の勝数で順位付けする。戻り値は「同順位グループ」の配列。 */
