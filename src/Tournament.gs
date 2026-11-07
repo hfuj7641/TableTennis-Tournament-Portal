@@ -278,6 +278,18 @@ function applyWithdrawals_(ms, W) {
   return changed;
 }
 
+/**
+ * 棄権の反映と台の割り当てを最新のルールに合わせる。
+ * （古いバージョンで決勝に台が付いている場合なども直す）戻り値: 変更があったか
+ */
+function normalizeTour_(ms, settings, W) {
+  const sig = function () { return ms.map(function (m) { return [m.id, m.status, m.table, m.winner, m.wo, m.p1, m.p2].join(':'); }).join(','); };
+  const before = sig();
+  applyWithdrawals_(ms, W);
+  assignTables_(ms, settings.tableCount);
+  return sig() !== before;
+}
+
 /** シートの棄権チェックをトーナメントに反映する（変更があれば保存） */
 function syncWithdrawals_() {
   if (!tourExists_()) return false;
@@ -287,8 +299,7 @@ function syncWithdrawals_() {
     const settings = getSettings_();
     const players = readPlayers_();
     const ms = readTMatches_();
-    if (!applyWithdrawals_(ms, withdrawnSet_(players))) return false;
-    assignTables_(ms, settings.tableCount);
+    if (!normalizeTour_(ms, settings, withdrawnSet_(players))) return false;
     writeTMatches_(ms);
     const snap = buildSnapshot_({ settings: settings, players: players, tmatches: ms });
     putSnapshotCache_(snap);
@@ -716,14 +727,12 @@ function apiSaveTMatch(tid, p) {
     if (m.wo) throw new Error('この試合は棄権による不戦勝です。取り消す場合は「参加者」シートの「棄権」のチェックを外してください。');
 
     let status = TSTATUS.NONE, winner = null, sets = [], c1 = 0, c2 = 0;
-    if (!p.reset) {
-      sets = sanitizeSets_(p.sets);
-      if (!sets.length) throw new Error('各セットの得点が入力されていません。');
-      const ev = evaluateSets_(sets, m.bestOf);
-      if (ev.errors.length) throw new Error(ev.errors.join('\n'));
-      c1 = ev.a; c2 = ev.b;
-      status = ev.winner ? TSTATUS.DONE : TSTATUS.PROGRESS;
-      winner = ev.winner === 1 ? m.p1 : ev.winner === 2 ? m.p2 : null;
+    const d = decideResult_(p, m.bestOf);
+    if (d.status !== 'none') {
+      sets = d.sets;
+      c1 = d.a; c2 = d.b;
+      status = d.status === 'done' ? TSTATUS.DONE : TSTATUS.PROGRESS;
+      winner = d.winner === 1 ? m.p1 : d.winner === 2 ? m.p2 : null;
     }
 
     // 勝者が変わる（または取り消す）場合、次の試合がまだ始まっていなければ差し替える

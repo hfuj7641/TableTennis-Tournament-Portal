@@ -138,8 +138,8 @@ function buildFreshSnapshot_() {
       console.warn('auto assign failed: ' + err);
     }
   }
-  // 棄権のチェックがトーナメントに反映されていなければ反映する（編集トリガーが動かなかった場合の保険）
-  if (tmatches.length && applyWithdrawals_(JSON.parse(JSON.stringify(tmatches)), withdrawnSet_(players))) {
+  // 棄権のチェックや台の割り当てがトーナメントに反映されていなければ反映する（編集トリガーが動かなかった場合・旧バージョンからの更新時の保険）
+  if (tmatches.length && normalizeTour_(JSON.parse(JSON.stringify(tmatches)), settings, withdrawnSet_(players))) {
     try {
       if (syncWithdrawals_()) return buildSnapshot_({ settings: settings, players: players, leagueRows: leagueRows });
     } catch (err) {

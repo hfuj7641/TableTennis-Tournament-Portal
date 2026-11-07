@@ -30,7 +30,8 @@ function checkEntryCode_(code) {
 /**
  * 試合結果を保存する。
  * tid = 大会ID
- * p = { matchId, ver, sets: [[a,b],...], force, reset, code }（獲得セット数は sets から計算）
+ * p = { matchId, ver, sets: [[a,b],...], progress, force, reset, code }（獲得セット数は sets から計算）
+ *   progress: 'before'（試合前）| 'playing'（試合中）| 'done'（試合終了）
  *   ver   : 画面を開いた時点の版。他の人が先に更新していたら conflict を返す。
  *   force : true なら版が違っても上書き。
  *   reset : true なら結果を消して「未実施」に戻す。
@@ -66,16 +67,14 @@ function apiSaveMatch(tid, p) {
     let c2 = '';
     let winner = '';
     let sets = [];
-    if (!p.reset) {
-      sets = sanitizeSets_(p.sets);
-      if (!sets.length) throw new Error('各セットの得点が入力されていません。');
-      const ev = evaluateSets_(sets, cur.bestOf);
-      if (ev.errors.length) throw new Error(ev.errors.join('\n'));
-      // 獲得セット数は各セットの得点から自動計算する
-      c1 = ev.a;
-      c2 = ev.b;
-      status = ev.winner ? STATUS.DONE : STATUS.PROGRESS;
-      winner = ev.winner === 1 ? cur.p1 : ev.winner === 2 ? cur.p2 : '';
+    // 獲得セット数は各セットの得点から自動計算する
+    const d = decideResult_(p, cur.bestOf);
+    if (d.status !== 'none') {
+      sets = d.sets;
+      c1 = d.a;
+      c2 = d.b;
+      status = d.status === 'done' ? STATUS.DONE : STATUS.PROGRESS;
+      winner = d.winner === 1 ? cur.p1 : d.winner === 2 ? cur.p2 : '';
     }
 
     const setCells = [];
@@ -99,6 +98,34 @@ function apiSaveMatch(tid, p) {
   } finally {
     lock.releaseLock();
   }
+}
+
+/**
+ * 進捗（試合前 / 試合中 / 試合終了）と各セットの得点を確認して、保存する状態を決める。
+ * p.progress: 'before' | 'playing' | 'done'（無い場合は得点から自動判定）
+ * 戻り値: { status: 'none'|'progress'|'done', sets, a, b, winner(0|1|2) }
+ */
+function decideResult_(p, bestOf) {
+  const sets = p.reset ? [] : sanitizeSets_(p.sets);
+  const ev = evaluateSets_(sets, bestOf);
+  if (ev.errors.length) throw new Error(ev.errors.join('\n'));
+  const need = setsToWin_(bestOf);
+  if (p.reset || p.progress === 'before') {
+    if (sets.length) throw new Error('「試合前」を選んでいますが、得点が入力されています。試合前に戻す場合は得点を消してください。');
+    return { status: 'none', sets: [], a: 0, b: 0, winner: 0 };
+  }
+  if (p.progress === 'playing') {
+    if (ev.winner) throw new Error('勝敗が決まっています（' + ev.a + '-' + ev.b + '）。「試合終了」を選んでください。');
+    return { status: 'progress', sets: sets, a: ev.a, b: ev.b, winner: 0 };
+  }
+  if (p.progress === 'done') {
+    if (!sets.length) throw new Error('得点が入力されていません。「試合終了」にするには、全セットの得点を入力してください。');
+    if (!ev.winner) throw new Error('まだ勝敗が決まっていません（現在 ' + ev.a + '-' + ev.b + '、' + need + 'セット先取）。全セットの得点を入力するか、「試合中」を選んでください。');
+    return { status: 'done', sets: sets, a: ev.a, b: ev.b, winner: ev.winner };
+  }
+  // 旧画面からの保存（進捗の指定なし）
+  if (!sets.length) throw new Error('各セットの得点が入力されていません。');
+  return { status: ev.winner ? 'done' : 'progress', sets: sets, a: ev.a, b: ev.b, winner: ev.winner };
 }
 
 function sanitizeSets_(raw) {

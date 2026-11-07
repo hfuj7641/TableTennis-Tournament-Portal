@@ -293,6 +293,20 @@
   .badge.wdb { background: var(--danger-soft); color: var(--danger); font-size: 10px; padding: 1px 6px; vertical-align: middle; }
   .final-item { background: #fffbea; }
   .final-item .qno { background: transparent; font-size: 16px; }
+  .tbl { padding: 10px; }
+  .tbl.called { background: #eaf2ff; border-top-color: var(--primary); box-shadow: 0 0 0 2px #9ec2ff inset, var(--shadow); }
+  .tbl.playing { background: #fff8e6; border-top-color: #f59f00; }
+  .tno { white-space: nowrap; flex-wrap: nowrap; }
+  .callmark { margin-left: auto; font-size: 10px; font-weight: 800; color: #fff; background: var(--primary); border-radius: 999px; padding: 1px 7px; animation: blink 1.6s ease-in-out infinite; }
+  .playmark { margin-left: auto; font-size: 10px; font-weight: 800; color: #fff; background: #f59f00; border-radius: 999px; padding: 1px 7px; }
+  @keyframes blink { 50% { opacity: 0.45; } }
+  .callhint { color: var(--primary-dark); margin-top: 4px; font-weight: 700; }
+  .board-none { padding: 4px 4px 0; }
+  .prog { display: flex; gap: 8px; }
+  .prog button { flex: 1; min-height: 46px; border: 2px solid var(--line); background: #fff; border-radius: 12px; font-weight: 800; color: var(--muted); }
+  .prog button.on.before { border-color: #98a2b3; background: #f2f4f7; color: var(--text); }
+  .prog button.on.playing { border-color: #f59f00; background: #fff4e5; color: var(--warn); }
+  .prog button.on.done { border-color: var(--ok); background: var(--ok-soft); color: var(--ok); }
   .seed-list { padding-left: 24px; }
   .seed-list li { margin: 3px 0; }
 </style>
