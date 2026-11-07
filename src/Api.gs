@@ -30,7 +30,7 @@ function checkEntryCode_(code) {
 /**
  * 試合結果を保存する。
  * tid = 大会ID
- * p = { matchId, ver, sets: [[a,b],...], c1, c2, force, reset, code }
+ * p = { matchId, ver, sets: [[a,b],...], force, reset, code }（獲得セット数は sets から計算）
  *   ver   : 画面を開いた時点の版。他の人が先に更新していたら conflict を返す。
  *   force : true なら版が違っても上書き。
  *   reset : true なら結果を消して「未実施」に戻す。
@@ -71,9 +71,7 @@ function apiSaveMatch(tid, p) {
       if (!sets.length) throw new Error('各セットの得点が入力されていません。');
       const ev = evaluateSets_(sets, cur.bestOf);
       if (ev.errors.length) throw new Error(ev.errors.join('\n'));
-      if (ev.a !== Number(p.c1) || ev.b !== Number(p.c2)) {
-        throw new Error('獲得セット数（' + p.c1 + '-' + p.c2 + '）と各セットの結果（' + ev.a + '-' + ev.b + '）が一致しません。');
-      }
+      // 獲得セット数は各セットの得点から自動計算する
       c1 = ev.a;
       c2 = ev.b;
       status = ev.winner ? STATUS.DONE : STATUS.PROGRESS;

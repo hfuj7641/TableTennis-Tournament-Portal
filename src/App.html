@@ -500,7 +500,7 @@
       var s = m.sets && m.sets[i];
       sets.push(s ? [String(s[0]), String(s[1])] : ['', '']);
     }
-    S.entry = { id: m.id, ver: m.ver, c1: m.status === STATUS.NONE ? null : m.c1, c2: m.status === STATUS.NONE ? null : m.c2, sets: sets, wasStatus: m.status };
+    S.entry = { id: m.id, ver: m.ver, sets: sets, wasStatus: m.status };
     go('entry', { league: L.no, id: m.id, focus: S.params.focus || null }, replace);
   }
 
@@ -520,9 +520,7 @@
     if (E.wasStatus === STATUS.DONE) html += '<div class="notice warn">⚠️ 終了済みの試合の結果を修正しています。</div>';
     if (E.wasStatus === STATUS.PROGRESS) html += '<div class="notice info">途中経過が保存されています。続きを入力してください。</div>';
 
-    html += '<div class="section-title">① 獲得セット数</div><div class="card" id="counts">' + countsHtml(m, E) + '</div>';
-
-    html += '<div class="section-title">② 各セットの得点</div><div class="card">' +
+    html += '<div class="section-title">各セットの得点</div><div class="card">' +
       '<div class="set-head"><span></span><span>' + esc(m.n1) + '</span><span></span><span>' + esc(m.n2) + '</span><span></span></div>';
     for (var i = 0; i < m.bestOf; i++) {
       html += '<div class="set-row" data-row="' + i + '"><label>第' + (i + 1) + 'セット</label>' +
@@ -539,17 +537,6 @@
     html += '</div>';
     app.innerHTML = html;
     updateCalc(m);
-  }
-
-  function countsHtml(m, E) {
-    var n = need(m.bestOf);
-    var seg = function (side, cur) {
-      var s = '';
-      for (var k = 0; k <= n; k++) s += '<button class="' + (cur === k ? 'on' : '') + '" data-act="count" data-side="' + side + '" data-v="' + k + '">' + k + '</button>';
-      return '<div class="seg">' + s + '</div>';
-    };
-    return '<div class="count-row"><div class="who">' + esc(m.n1) + '</div>' + seg(1, E.c1) + '</div>' +
-      '<div class="count-row"><div class="who">' + esc(m.n2) + '</div>' + seg(2, E.c2) + '</div>';
   }
 
   /** 入力中の各セットを解析する */
@@ -591,35 +578,22 @@
     }
     var calc = document.getElementById('calc');
     if (!calc) return;
-    var mismatch = E.c1 !== null && E.c2 !== null && (E.c1 !== r.a || E.c2 !== r.b);
-    calc.className = 'calc' + (mismatch ? ' bad' : '');
-    calc.innerHTML = '得点から計算した獲得セット数: <b>' + r.a + ' - ' + r.b + '</b>' + (mismatch ? '<br><span style="color:var(--danger)">①の獲得セット数と一致していません</span>' : '');
+    var state = r.winner ? '<span class="badge done">' + esc(r.winner === 1 ? m.n1 : m.n2) + ' の勝ち</span>'
+      : r.sets.length ? '<span class="badge progress">試合途中</span>' : '';
+    calc.className = 'calc';
+    calc.innerHTML = '獲得セット数（自動計算）: <b style="font-size:20px">' + r.a + ' - ' + r.b + '</b> ' + state;
   }
 
   function saveEntry(L, m) {
     var E = S.entry;
     var r = analyzeEntry(m);
-    var c1 = E.c1, c2 = E.c2;
 
-    if (!r.sets.length && (c1 === null || c1 === 0) && (c2 === null || c2 === 0)) {
-      if (E.wasStatus !== STATUS.NONE) return doReset(L, m);
-      return alertBox('結果が入力されていません', '<p>獲得セット数と各セットの得点を入力してください。</p>');
-    }
     if (r.errors.length) {
       return alertBox('入力内容を確認してください', '<ul>' + r.errors.map(function (e) { return '<li>' + esc(e) + '</li>'; }).join('') + '</ul>');
     }
-    if (c1 === null || c2 === null) {
-      return alertBox('獲得セット数を選んでください', '<p>「① 獲得セット数」で、両方の選手の獲得セット数を選んでください。</p><p class="small muted">各セットの得点から計算すると <b>' + r.a + ' - ' + r.b + '</b> です。</p>');
-    }
-    if (c1 > r.n || c2 > r.n || (c1 === r.n && c2 === r.n)) {
-      return alertBox('獲得セット数が正しくありません', '<p>' + m.bestOf + 'セットマッチ（' + r.n + 'セット先取）です。獲得セット数を確認してください。</p>');
-    }
-    if (c1 !== r.a || c2 !== r.b) {
-      return alertBox('獲得セット数とセットの結果が一致しません',
-        '<p>入力内容に食い違いがあります。入力画面に戻って確認してください。</p>' +
-        '<table style="margin-top:8px"><tbody>' +
-        '<tr><th style="text-align:left">① 獲得セット数</th><td><b>' + c1 + ' - ' + c2 + '</b></td></tr>' +
-        '<tr><th style="text-align:left">② 各セットの得点から計算</th><td><b>' + r.a + ' - ' + r.b + '</b></td></tr></tbody></table>');
+    if (!r.sets.length) {
+      if (E.wasStatus !== STATUS.NONE) return doReset(L, m);
+      return alertBox('結果が入力されていません', '<p>各セットの得点を入力してください。</p>');
     }
 
     var chain = Promise.resolve(true);
@@ -639,7 +613,7 @@
           title: '試合途中ですね？', icon: '⏸️',
           html: '<p>まだどちらの選手も <b>' + r.n + 'セット</b> を取っていません（現在 <b>' + r.a + ' - ' + r.b + '</b>）。</p>' +
             '<p><b>試合途中</b>の場合は「途中経過として保存」を押してください。</p>' +
-            '<p class="notice warn" style="margin:0"><b>試合が終わっている場合</b>は「入力に戻る」を押して、獲得セット数を含めて<b>全セットの結果</b>を入力してください。</p>',
+            '<p class="notice warn" style="margin:0"><b>試合が終わっている場合</b>は「入力に戻る」を押して、<b>全セットの得点</b>を入力してください。</p>',
           buttons: [{ label: '入力に戻る', value: false, cls: 'ghost' }, { label: '途中経過として保存', value: true, cls: 'accent' }],
           dismissable: false,
         });
@@ -653,7 +627,7 @@
       });
     }).then(function (ok) {
       if (!ok) return;
-      submit(L, m, { matchId: m.id, ver: E.ver, sets: r.sets, c1: c1, c2: c2 });
+      submit(L, m, { matchId: m.id, ver: E.ver, sets: r.sets });
     });
   }
 
@@ -1171,15 +1145,6 @@
       case 'edit': {
         var m2 = L && findMatch(L, el.getAttribute('data-id'));
         if (m2) openEntry(L, m2);
-        break;
-      }
-      case 'count': {
-        var side = el.getAttribute('data-side');
-        var v = Number(el.getAttribute('data-v'));
-        if (side === '1') S.entry.c1 = v; else S.entry.c2 = v;
-        var mm = findMatch(L, S.params.id);
-        document.getElementById('counts').innerHTML = countsHtml(mm, S.entry);
-        updateCalc(mm);
         break;
       }
       case 'save':
