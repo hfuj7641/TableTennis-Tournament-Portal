@@ -878,7 +878,7 @@
     });
     html += '</div>';
     if (T.queue.length) {
-      html += '<div class="section-title">次の試合（台が空いた順に呼び出し）</div><div class="queue">' +
+      html += '<div class="section-title">次の試合（目安：台が空くと、上位・下位の残り試合数に応じて順に呼び出し）</div><div class="queue">' +
         T.queue.slice(0, 8).map(function (id, i) {
           var m = T.byId[id];
           return '<button class="qitem" data-act="tmatch" data-id="' + esc(id) + '"><span class="qno">' + (i + 1) + '</span>' +

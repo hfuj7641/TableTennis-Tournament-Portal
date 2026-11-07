@@ -4,7 +4,7 @@
  * - リーグ戦の結果から、上位（各リーグ上位 advanceCount 名）・下位（それ以外）のトーナメントを作る
  * - シード順: リーグ内順位 → 勝率 → セット率 → 獲得セット数（完全に同じならランダム）
  * - シード順に標準的な位置へ配置（上位シードほど不戦勝になる）。1回戦で同じリーグの選手が当たる場合は入れ替える
- * - 台の数を設定し、対戦相手が決まった試合に空いている台を自動で割り当てる（上位・下位を交互に）
+ * - 台の数を設定し、対戦相手が決まった試合に空いている台を自動で割り当てる（上位・下位の残り試合数に比例して配分）
  * - 結果を保存すると勝者が次の試合へ進み、空いた台に次の試合が入る
  * - 3位決定戦（準決勝の敗者どうし）。決勝と同じ回戦の pos=1 として持つ
  * - 決勝は台を割り当てない（大会スタッフが個別に案内する）
@@ -341,16 +341,57 @@ function assignTables_(ms, T) {
   });
   ms.filter(function (m) { return m.status === TSTATUS.NONE && !m.seq && !isFinal_(ms, m); }).sort(tablePriority_(ms))
     .forEach(function (m) { m.seq = ++maxSeq; });
-  const queue = ms.filter(function (m) { return m.status === TSTATUS.NONE && !m.table && !isFinal_(ms, m); }).sort(bySeq_);
+  const plan = tableLoad_(ms);
   const assigned = [];
-  for (let t = 1; t <= T && queue.length; t++) {
+  for (let t = 1; t <= T; t++) {
     if (busy[t]) continue;
-    const m = queue.shift();
+    const m = pickNext_(plan);
+    if (!m) break;
     m.table = t;
     busy[t] = true;
     assigned.push(m);
   }
   return assigned;
+}
+
+/**
+ * 上位・下位それぞれの「残り試合数」「台を使っている試合数」「台の空き待ちの試合」。
+ * 残り試合数は、終わっていない試合（対戦相手待ちを含む。不戦勝と、台を使わない決勝は除く）。
+ */
+function tableLoad_(ms) {
+  const plan = {};
+  [TTYPE.UPPER, TTYPE.LOWER].forEach(function (type) {
+    const list = ms.filter(function (m) { return m.type === type && !isFinal_(ms, m); });
+    plan[type] = {
+      remaining: list.filter(function (m) { return m.status !== TSTATUS.DONE && m.status !== TSTATUS.BYE; }).length,
+      active: list.filter(function (m) { return m.table && (m.status === TSTATUS.NONE || m.status === TSTATUS.PROGRESS); }).length,
+      queue: list.filter(function (m) { return m.status === TSTATUS.NONE && !m.table; }).sort(bySeq_),
+      rounds: roundsOf_(ms, type),
+    };
+  });
+  return plan;
+}
+
+/**
+ * 次に台に入れる試合を選ぶ。
+ * 残り試合数に比例して台を配分する（残り試合数 ÷（台を使っている試合数 + 1）が大きい方）。
+ * 同じなら残りの回戦が多い方 → 上位。それぞれの中では呼出順（対戦相手が決まった順）。
+ */
+function pickNext_(plan) {
+  let best = null, bestScore = -1;
+  [TTYPE.UPPER, TTYPE.LOWER].forEach(function (type) {
+    const p = plan[type];
+    if (!p.queue.length) return;
+    const score = p.remaining / (p.active + 1);
+    const left = p.rounds - p.queue[0].round;
+    if (score > bestScore + 1e-9 || (Math.abs(score - bestScore) < 1e-9 && best && left > plan[best].rounds - plan[best].queue[0].round)) {
+      best = type;
+      bestScore = score;
+    }
+  });
+  if (!best) return null;
+  plan[best].active++;
+  return plan[best].queue.shift();
 }
 
 function bySeq_(a, b) {
@@ -499,8 +540,10 @@ function buildTourData_(ms, settings, byNum) {
     const m = active.filter(function (x) { return x.table === t; })[0];
     out.board.push({ table: t, id: m ? m.id : null, extra: t > T });
   }
-  out.queue = ms.filter(function (m) { return m.status === TSTATUS.NONE && !m.table && !isFinal_(ms, m); })
-    .sort(bySeq_).map(function (m) { return m.id; });
+  // 次の試合の表示順 = 台が空いたときに割り当てる順（同じ配分ルールで予測）
+  const plan = tableLoad_(ms);
+  out.queue = [];
+  for (let m = pickNext_(plan); m; m = pickNext_(plan)) out.queue.push(m.id);
   // 対戦相手が決まった決勝（台は個別に案内）
   out.finals = ms.filter(function (m) { return isFinal_(ms, m) && (m.status === TSTATUS.NONE || m.status === TSTATUS.PROGRESS); })
     .sort(function (a, b) { return a.type === TTYPE.UPPER ? -1 : 1; }).map(function (m) { return m.id; });
