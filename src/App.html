@@ -8,9 +8,15 @@
 
   var S = {
     mode: null,          // 'player' | 'viewer' | 'admin'
+    tid: null,           // 選択中の大会ID
+    tournament: null,    // { id, name, date }
+    tournaments: null,   // 大会一覧
+    masterSet: true,     // システム管理者パスワードが設定済みか
+    sysPw: '',
+    sys: null,
     boot: null,
     leagues: {},         // no -> league data
-    view: 'home',
+    view: 'tlist',
     params: {},
     selectTab: 'league',
     search: '',
@@ -144,7 +150,7 @@
   function go(view, params, replace) {
     S.view = view;
     S.params = params || {};
-    var state = { view: view, params: S.params, mode: S.mode };
+    var state = { view: view, params: S.params, mode: S.mode, tid: S.tid };
     if (hasHistory) {
       try {
         if (replace) google.script.history.replace(state);
@@ -162,11 +168,18 @@
         S.view = st.view;
         S.params = st.params || {};
         S.mode = st.mode || S.mode;
+        if (st.tid && st.tid !== S.tid) {
+          var t = (S.tournaments || []).filter(function (x) { return x.id === st.tid; })[0];
+          if (t) { switchTournament(t); S.view = 'home'; S.params = {}; loadBoot(true).then(render).catch(showError); }
+          else S.view = 'tlist';
+        }
       } else {
-        S.view = 'home';
+        S.view = 'tlist';
         S.params = {};
       }
-      if (S.view === 'admin' && !S.adminPw) S.view = 'home';
+      if (S.view === 'admin' && !S.adminPw) S.view = S.tid ? 'home' : 'tlist';
+      if (S.view === 'sys' && !S.sysPw) S.view = 'tlist';
+      if (S.view !== 'tlist' && S.view !== 'sys' && !S.tid) S.view = 'tlist';
       render();
     });
   }
@@ -174,7 +187,8 @@
   function topbar(title, backTo, backParams) {
     var chip = S.mode === 'player' ? '<span class="chip player">選手用</span>'
       : S.mode === 'viewer' ? '<span class="chip viewer">閲覧用</span>'
-      : S.mode === 'admin' ? '<span class="chip admin">管理者</span>' : '';
+      : S.mode === 'admin' ? '<span class="chip admin">管理者</span>'
+      : S.mode === 'sys' ? '<span class="chip admin">システム管理</span>' : '';
     return '<div class="topbar"><div class="topbar-in">' +
       (backTo ? '<button class="back" data-act="back" data-to="' + esc(backTo) + '" data-p="' + esc(JSON.stringify(backParams || {})) + '">‹ 戻る</button>' : '') +
       '<h1>' + esc(title) + '</h1>' + chip + '</div></div>';
@@ -184,7 +198,7 @@
 
   function loadBoot(silent) {
     if (!silent) busy(true);
-    return call('apiGetBoot').then(function (b) {
+    return call('apiGetBoot', S.tid).then(function (b) {
       S.boot = b;
       busy(false);
       return b;
@@ -196,7 +210,7 @@
 
   function loadLeague(no, silent) {
     if (!silent) busy(true);
-    return call('apiGetLeague', no).then(function (L) {
+    return call('apiGetLeague', S.tid, no).then(function (L) {
       S.leagues[no] = L;
       busy(false);
       return L;
@@ -214,6 +228,9 @@
 
   function render() {
     var v = S.view;
+    if (v === 'tlist') return renderTournamentList();
+    if (v === 'sys') return renderSys();
+    if (!S.tid) return renderTournamentList();
     if (v === 'home') return renderHome();
     if (v === 'select') return renderSelect();
     if (v === 'league') return withLeague(renderLeague);
@@ -233,15 +250,15 @@
   /* ----- home ----- */
 
   function renderHome() {
-    var title = (S.boot && S.boot.title) || '卓球大会';
-    app.innerHTML =
-      '<div class="home">' +
+    var title = (S.boot && S.boot.title) || (S.tournament && S.tournament.name) || '卓球大会';
+    app.innerHTML = topbar('', 'tlist') +
+      '<div class="home" style="padding-top:24px">' +
       '<div class="hero-ball">🏓</div>' +
       '<h1>' + esc(title) + '</h1>' +
-      '<p class="sub">リーグ戦 試合結果ポータル</p>' +
+      '<p class="sub">' + (S.tournament && S.tournament.date ? esc(S.tournament.date) + ' ・ ' : '') + 'リーグ戦 試合結果ポータル</p>' +
       '<button class="big-btn player" data-act="mode" data-mode="player"><span class="ico">✍️</span><span><b>選手用（試合結果の入力）</b><small>自分の試合の結果を入力・修正できます</small></span></button>' +
       '<button class="big-btn viewer" data-act="mode" data-mode="viewer"><span class="ico">👀</span><span><b>結果確認用（保護者・観覧）</b><small>試合結果と順位を見ることができます（閲覧のみ）</small></span></button>' +
-      '<button class="admin-link" data-act="admin">管理者メニュー</button>' +
+      '<button class="admin-link" data-act="admin">この大会の管理者メニュー</button>' +
       '</div>';
   }
 
@@ -251,7 +268,7 @@
       go('select', {});
     };
     if (mode !== 'player' || !S.boot || !S.boot.requiresEntryCode) return proceed();
-    var saved = store('entryCode');
+    var saved = store('entryCode:' + S.tid);
     if (saved) { S.entryCode = saved; return proceed(); }
     modal({
       title: '選手入力パスコード',
@@ -267,11 +284,11 @@
       if (!ok) return;
       var code = String(S._ec || '').trim();
       busy(true);
-      call('apiVerifyEntryCode', code).then(function (r) {
+      call('apiVerifyEntryCode', S.tid, code).then(function (r) {
         busy(false);
         if (r.ok) {
           S.entryCode = code;
-          store('entryCode', code);
+          store('entryCode:' + S.tid, code);
           proceed();
         } else alertBox('パスコードが違います', '<p>もう一度入力してください。</p>');
       }).catch(function (e) { busy(false); showError(e); });
@@ -654,7 +671,7 @@
     payload.code = S.entryCode;
     payload.force = !!force;
     busy(true);
-    call('apiSaveMatch', payload).then(function (res) {
+    call('apiSaveMatch', S.tid, payload).then(function (res) {
       busy(false);
       if (res.conflict) {
         var c = res.current;
@@ -682,6 +699,218 @@
     });
   }
 
+  /* ----- tournament list ----- */
+
+  function switchTournament(t) {
+    if (S.tid !== t.id) {
+      S.boot = null;
+      S.leagues = {};
+      S.admin = null;
+      S.adminPw = '';
+      S.entry = null;
+      S.search = '';
+    }
+    S.tid = t.id;
+    S.tournament = t;
+    S.entryCode = store('entryCode:' + t.id) || '';
+  }
+
+  function openTournament(t) {
+    switchTournament(t);
+    S.mode = null;
+    busy(true);
+    loadBoot().then(function () { go('home', {}); }).catch(function (e) { busy(false); showError(e); });
+  }
+
+  function loadTournaments(silent) {
+    if (!silent) busy(true);
+    return call('apiListTournaments').then(function (r) {
+      busy(false);
+      S.tournaments = r.tournaments;
+      S.masterSet = r.masterSet;
+      return r;
+    }).catch(function (e) { busy(false); throw e; });
+  }
+
+  function renderTournamentList() {
+    var list = S.tournaments || [];
+    var html = '<div class="home" style="padding-bottom:16px"><div class="hero-ball">🏓</div><h1>卓球大会ポータル</h1>' +
+      '<p class="sub">参加する・見たい大会を選んでください</p></div><div class="wrap" style="max-width:520px">';
+    if (!list.length) {
+      html += '<div class="card empty">公開中の大会はまだありません。' +
+        (S.masterSet ? '' : '<br><br>はじめに下の「大会の作成・管理」からシステム管理者パスワードを設定し、大会を作成してください。') + '</div>';
+    } else {
+      html += '<div class="name-list">' + list.map(function (t) {
+        return '<button class="name-item" data-act="open-tournament" data-tid="' + esc(t.id) + '">' +
+          '<span style="font-size:24px">🏆</span><span class="nm"><b>' + esc(t.name) + '</b>' + (t.date ? '<small>' + esc(t.date) + '</small>' : '') + '</span>' +
+          '<span class="lg">開く ›</span></button>';
+      }).join('') + '</div>';
+    }
+    html += '<div style="text-align:center"><button class="btn ghost" data-act="reload-tournaments" style="margin-top:12px">🔄 一覧を更新</button><br>' +
+      '<button class="admin-link" data-act="sys">大会の作成・管理（システム管理者）</button></div></div>';
+    app.innerHTML = html;
+  }
+
+  /* ----- system admin (create / manage tournaments) ----- */
+
+  function sysLogin() {
+    var first = !S.masterSet;
+    modal({
+      title: first ? 'システム管理者パスワードの設定' : 'システム管理者ログイン', icon: '🔒',
+      html: (first ? '<p class="small muted">初回のみ、大会を作成・管理するためのパスワードを決めてください（4文字以上）。忘れないようにしてください。</p>' : '') +
+        '<input id="spw" class="search" type="password" placeholder="システム管理者パスワード" autocomplete="' + (first ? 'new-password' : 'current-password') + '">' +
+        (first ? '<input id="spw2" class="search" style="margin-top:8px" type="password" placeholder="もう一度入力" autocomplete="new-password">' : ''),
+      buttons: [{ label: 'キャンセル', value: false, cls: 'ghost' }, { label: first ? '設定する' : 'ログイン', value: true, cls: 'primary' }],
+      onOpen: function (bg) { setTimeout(function () { bg.querySelector('#spw').focus(); }, 50); },
+      beforeClose: function (v, bg) {
+        if (!v) return;
+        S._spw = bg.querySelector('#spw').value;
+        if (first && S._spw !== bg.querySelector('#spw2').value) { bg.querySelector('#spw2').style.borderColor = 'var(--danger)'; return false; }
+      },
+    }).then(function (ok) {
+      if (!ok) return;
+      busy(true);
+      call(first ? 'sysSetup' : 'sysGetData', S._spw).then(function (d) {
+        busy(false);
+        S.sysPw = S._spw;
+        S.masterSet = true;
+        S.sys = d;
+        S.mode = 'sys';
+        go('sys', {});
+      }).catch(function (e) { busy(false); showError(e); });
+    });
+  }
+
+  function sysCall(fn) {
+    var args = Array.prototype.slice.call(arguments, 1);
+    busy(true);
+    return call.apply(null, [fn, S.sysPw].concat(args)).then(function (r) { busy(false); S.sys = r; return r; })
+      .catch(function (e) { busy(false); showError(e); throw e; });
+  }
+
+  function renderSys() {
+    var D = S.sys;
+    if (!D) { go('tlist', {}, true); return; }
+    var today = new Date();
+    var ymd = today.getFullYear() + '-' + ('0' + (today.getMonth() + 1)).slice(-2) + '-' + ('0' + today.getDate()).slice(-2);
+    var html = topbar('大会の作成・管理', 'tlist') + '<div class="wrap">';
+    html += '<div class="section-title">新しい大会を作成</div><div class="card" id="sys-form">' +
+      '<div class="form-row"><label>大会名 *</label><input name="name" placeholder="例: 第1回 市民卓球大会"></div>' +
+      '<div class="grid2"><div class="form-row"><label>開催日</label><input name="date" type="date" value="' + ymd + '"></div>' +
+      '<div class="form-row"><label>大会管理者パスワード *</label><input name="adminPassword" autocomplete="off"><div class="hint">大会スタッフが管理者メニューに入るときに使います</div></div></div>' +
+      '<div class="form-row"><label>既存のスプレッドシートを使う（任意）</label><input name="sheetUrl" placeholder="https://docs.google.com/spreadsheets/d/..."><div class="hint">空欄なら新しいスプレッドシートを自動で作成します。事前に選手名を入れたシートを使う場合は URL を貼り付けてください（このアプリを公開したアカウントに編集権限が必要です）</div></div>' +
+      '<button class="btn accent block" data-act="sys-create">🏆 大会を作成</button></div>';
+
+    html += '<div class="section-title">大会一覧</div>';
+    if (!D.tournaments.length) html += '<div class="card empty">まだ大会はありません。</div>';
+    D.tournaments.forEach(function (t) {
+      html += '<div class="card">' +
+        '<div style="display:flex;align-items:center;gap:8px"><b style="flex:1">' + esc(t.name) + '</b>' + (t.hidden ? '<span class="badge none">非公開</span>' : '<span class="badge done">公開中</span>') + '</div>' +
+        '<div class="small muted">' + (t.date ? '開催日 ' + esc(t.date) + ' ・ ' : '') + '作成 ' + esc(t.createdAt) + '</div>' +
+        '<div class="row-actions">' +
+        '<button class="btn primary" data-act="sys-open" data-tid="' + esc(t.id) + '">管理者メニューへ</button>' +
+        '<a class="btn" href="' + esc(t.ssUrl) + '" target="_blank" rel="noopener">📄 シート</a>' +
+        (t.link ? '<button class="btn ghost" data-act="copy" data-text="' + esc(t.link) + '">🔗 リンク</button>' : '') +
+        '<button class="btn ghost" data-act="sys-edit" data-tid="' + esc(t.id) + '">✏️ 編集</button>' +
+        '<button class="btn ghost" data-act="sys-hide" data-tid="' + esc(t.id) + '" data-h="' + (t.hidden ? '0' : '1') + '">' + (t.hidden ? '公開する' : '非公開にする') + '</button>' +
+        '<button class="btn danger" data-act="sys-remove" data-tid="' + esc(t.id) + '">一覧から削除</button>' +
+        '</div></div>';
+    });
+    html += '<div class="section-title">その他</div><div class="card"><button class="btn ghost" data-act="sys-pw">システム管理者パスワードを変更</button></div>';
+    html += '</div>';
+    app.innerHTML = html;
+  }
+
+  function sysFind(tid) {
+    return (S.sys.tournaments || []).filter(function (t) { return t.id === tid; })[0];
+  }
+
+  function sysAction(act, el) {
+    var tid = el.getAttribute('data-tid');
+    var t = tid ? sysFind(tid) : null;
+    if (act === 'sys-create') {
+      var f = {};
+      document.querySelectorAll('#sys-form [name]').forEach(function (x) { f[x.name] = x.value.trim(); });
+      if (!f.name || !f.adminPassword) return alertBox('入力してください', '<p>大会名と大会管理者パスワードは必須です。</p>');
+      return sysCall('sysCreateTournament', f).then(function (d) {
+        loadTournaments(true).catch(function () {});
+        render();
+        var c = sysFind(d.created);
+        return modal({
+          title: '大会を作成しました', icon: '✅',
+          html: '<p><b>' + esc(f.name) + '</b> を作成しました。スプレッドシートの「参加者」シートに選手名を入力し、管理者メニューからリーグ戦を作成してください。</p>' +
+            (c && c.link ? '<p class="small muted">この大会の直接リンク:<br><span style="word-break:break-all">' + esc(c.link) + '</span></p>' : ''),
+          buttons: [{ label: '閉じる', value: false, cls: 'ghost' }, { label: '管理者メニューへ', value: true, cls: 'primary' }],
+        }).then(function (v) { if (v) sysOpen(d.created); });
+      }).catch(function () {});
+    }
+    if (act === 'sys-open') return sysOpen(tid);
+    if (act === 'sys-hide') {
+      return sysCall('sysUpdateTournament', tid, { hidden: el.getAttribute('data-h') === '1' }).then(function () {
+        render(); loadTournaments(true).catch(function () {});
+      }).catch(function () {});
+    }
+    if (act === 'sys-edit') {
+      return modal({
+        title: '大会の編集', icon: '✏️',
+        html: '<div class="form-row"><label>大会名</label><input id="e-name" value="' + esc(t.name) + '"></div>' +
+          '<div class="form-row"><label>開催日</label><input id="e-date" type="date" value="' + esc(t.date) + '"></div>',
+        buttons: [{ label: 'キャンセル', value: false, cls: 'ghost' }, { label: '保存', value: true, cls: 'primary' }],
+        beforeClose: function (v, bg) { if (v) S._edit = { name: bg.querySelector('#e-name').value, date: bg.querySelector('#e-date').value }; },
+      }).then(function (ok) {
+        if (!ok) return;
+        sysCall('sysUpdateTournament', tid, S._edit).then(function () { render(); loadTournaments(true).catch(function () {}); }).catch(function () {});
+      });
+    }
+    if (act === 'sys-remove') {
+      return modal({
+        title: '一覧から削除しますか？', icon: '🗑️',
+        html: '<p><b>' + esc(t.name) + '</b> をポータルの一覧から削除します。</p><p class="small muted">スプレッドシート自体は削除されず、Google ドライブに残ります。一時的に隠したいだけなら「非公開にする」を使ってください。</p>',
+        buttons: [{ label: 'やめる', value: false, cls: 'ghost' }, { label: '削除する', value: true, cls: 'danger' }],
+      }).then(function (ok) {
+        if (!ok) return;
+        sysCall('sysRemoveTournament', tid).then(function () { render(); loadTournaments(true).catch(function () {}); }).catch(function () {});
+      });
+    }
+    if (act === 'sys-pw') {
+      return modal({
+        title: 'パスワード変更', icon: '🔑',
+        html: '<input id="npw" class="search" type="password" placeholder="新しいパスワード（4文字以上）" autocomplete="new-password">',
+        buttons: [{ label: 'キャンセル', value: false, cls: 'ghost' }, { label: '変更', value: true, cls: 'primary' }],
+        beforeClose: function (v, bg) { if (v) S._npw = bg.querySelector('#npw').value; },
+      }).then(function (ok) {
+        if (!ok) return;
+        sysCall('sysChangePassword', S._npw).then(function () { S.sysPw = S._npw; toast('パスワードを変更しました'); }).catch(function () {});
+      });
+    }
+  }
+
+  /** システム管理者のまま、大会の管理者メニューに入る */
+  function sysOpen(tid) {
+    var t = sysFind(tid);
+    if (!t) return;
+    switchTournament({ id: t.id, name: t.name, date: t.date });
+    busy(true);
+    Promise.all([call('adminLogin', t.id, S.sysPw), loadBoot(true)]).then(function (r) {
+      busy(false);
+      S.adminPw = S.sysPw;
+      S.admin = r[0];
+      S.mode = 'admin';
+      go('admin', {});
+    }).catch(function (e) { busy(false); showError(e); });
+  }
+
+  function copyText(text) {
+    var done = function () { toast('リンクをコピーしました'); };
+    var fallback = function () {
+      modal({ title: 'リンク', icon: '🔗', html: '<input class="search" readonly value="' + esc(text) + '" onfocus="this.select()">', buttons: [{ label: '閉じる', value: true, cls: 'primary' }] });
+    };
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(done, fallback);
+      else fallback();
+    } catch (e) { fallback(); }
+  }
+
   /* ----- admin ----- */
 
   function renderAdmin() {
@@ -689,7 +918,10 @@
     if (!A) { go('home', {}, true); return; }
     var s = A.settings;
     var st = A.stats;
-    var html = topbar('管理者メニュー', 'home') + '<div class="wrap">';
+    var html = topbar('管理者メニュー', S.sysPw ? 'sys' : 'home') + '<div class="wrap">';
+    html += '<div class="card" style="margin-top:16px"><b>' + esc(A.tournament.name) + '</b>' + (A.tournament.date ? ' <span class="muted small">' + esc(A.tournament.date) + '</span>' : '') +
+      '<div class="row-actions"><a class="btn" href="' + esc(A.ssUrl) + '" target="_blank" rel="noopener">📄 スプレッドシートを開く</a>' +
+      (A.link ? '<button class="btn ghost" data-act="copy" data-text="' + esc(A.link) + '">🔗 この大会の直接リンクをコピー</button>' : '') + '</div></div>';
 
     html += '<div class="section-title">参加者の状況（「参加者」シート）</div><div class="card">' +
       '<div class="stats">' +
@@ -747,6 +979,7 @@
 
     html += '<div class="section-title">その他</div><div class="card"><div class="row-actions" style="margin:0">' +
       '<button class="btn" data-act="adm-export">「順位」シートを更新</button>' +
+      '<button class="btn ghost" data-act="adm-sample">テスト用サンプル選手を追加</button>' +
       '<button class="btn ghost" data-act="adm-cache">表示キャッシュをクリア</button></div></div>';
     html += '</div>';
     app.innerHTML = html;
@@ -787,7 +1020,7 @@
   function adminCall(fn) {
     var args = Array.prototype.slice.call(arguments, 1);
     busy(true);
-    return call.apply(null, [fn, S.adminPw].concat(args)).then(function (r) { busy(false); return r; })
+    return call.apply(null, [fn, S.tid, S.adminPw].concat(args)).then(function (r) { busy(false); return r; })
       .catch(function (e) { busy(false); showError(e); throw e; });
   }
 
@@ -805,7 +1038,7 @@
     }).then(function (ok) {
       if (!ok) return;
       busy(true);
-      call('adminLogin', S._apw).then(function (d) {
+      call('adminLogin', S.tid, S._apw).then(function (d) {
         busy(false);
         S.adminPw = S._apw;
         S.admin = d;
@@ -854,7 +1087,33 @@
     var act = el.getAttribute('data-act');
     var L = S.leagues[S.params.league];
 
+    if (act.indexOf('sys-') === 0) { sysAction(act, el); return; }
+
     switch (act) {
+      case 'open-tournament': {
+        var tid = el.getAttribute('data-tid');
+        var t = (S.tournaments || []).filter(function (x) { return x.id === tid; })[0];
+        if (t) openTournament(t);
+        break;
+      }
+      case 'reload-tournaments':
+        loadTournaments().then(render).catch(showError);
+        break;
+      case 'sys':
+        sysLogin();
+        break;
+      case 'copy':
+        copyText(el.getAttribute('data-text'));
+        break;
+      case 'adm-sample':
+        modal({
+          title: 'サンプル選手を追加', icon: '🧪',
+          html: '<p>テスト用に、参加・支払済みでくじ番号付きのサンプル選手 18 名を「参加者」シートに追加します。</p><p class="small muted">本番の大会では使わないでください。</p>',
+          buttons: [{ label: 'やめる', value: false, cls: 'ghost' }, { label: '追加する', value: true, cls: 'primary' }],
+        }).then(function (ok) {
+          if (ok) adminCall('adminAddSamplePlayers', 18).then(function () { toast('サンプル選手を追加しました'); return adminReload(); }).catch(function () {});
+        });
+        break;
       case 'mode':
         enterMode(el.getAttribute('data-mode'));
         break;
@@ -866,7 +1125,8 @@
         var p = {};
         try { p = JSON.parse(el.getAttribute('data-p') || '{}'); } catch (e) { p = {}; }
         if (S.view === 'entry') S.entry = null;
-        if (to === 'home' && S.mode === 'admin') S.mode = null;
+        if (to === 'home' || to === 'tlist') S.mode = null;
+        if (to === 'sys') S.mode = 'sys';
         go(to, p);
         break;
       }
@@ -1035,12 +1295,29 @@
 
   /* ---------------- start ---------------- */
 
-  S.entryCode = store('entryCode') || '';
-  loadBoot(true).then(function () {
-    go('home', {}, true);
-  }).catch(function (e) {
-    go('home', {}, true);
-    showError(e);
-  });
+  function start(param) {
+    loadTournaments(true).then(function () {
+      if (param) {
+        return call('apiGetTournament', param).then(function (t) {
+          if (!t) { go('tlist', {}, true); return alertBox('大会が見つかりません', '<p>リンクの大会は削除された可能性があります。一覧から選んでください。</p>'); }
+          switchTournament(t);
+          return loadBoot(true).then(function () { go('home', {}, true); });
+        });
+      }
+      go('tlist', {}, true);
+    }).catch(function (e) {
+      go('tlist', {}, true);
+      showError(e);
+    });
+  }
+
+  // URL に ?t=大会ID があれば、その大会を直接開く
+  try {
+    google.script.url.getLocation(function (loc) {
+      start(loc && loc.parameter && loc.parameter.t ? String(loc.parameter.t) : '');
+    });
+  } catch (e) {
+    start('');
+  }
 })();
 </script>

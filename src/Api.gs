@@ -3,15 +3,18 @@
  * 戻り値はすべて JSON 文字列（キャッシュをそのまま返せるため）。
  */
 
-function apiGetBoot() {
+function apiGetBoot(tid) {
+  useTournament_(tid);
   return getBootJson_();
 }
 
-function apiGetLeague(no) {
+function apiGetLeague(tid, no) {
+  useTournament_(tid);
   return getLeagueJson_(no);
 }
 
-function apiVerifyEntryCode(code) {
+function apiVerifyEntryCode(tid, code) {
+  useTournament_(tid);
   const s = getSettings_();
   return JSON.stringify({ ok: !s.entryCode || String(code || '').trim() === s.entryCode });
 }
@@ -26,12 +29,14 @@ function checkEntryCode_(code) {
 
 /**
  * 試合結果を保存する。
+ * tid = 大会ID
  * p = { matchId, ver, sets: [[a,b],...], c1, c2, force, reset, code }
  *   ver   : 画面を開いた時点の版。他の人が先に更新していたら conflict を返す。
  *   force : true なら版が違っても上書き。
  *   reset : true なら結果を消して「未実施」に戻す。
  */
-function apiSaveMatch(p) {
+function apiSaveMatch(tid, p) {
+  useTournament_(tid);
   p = p || {};
   const settings = checkEntryCode_(p.code);
 

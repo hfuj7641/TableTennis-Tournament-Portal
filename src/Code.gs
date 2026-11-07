@@ -52,17 +52,23 @@ const MATCH_HEADERS = [
 /* ------------------------------------------------------------------ */
 
 function doGet() {
-  let title = '卓球大会ポータル';
-  try {
-    title = getSettings_().title || title;
-  } catch (err) {
-    // シート未作成でもページは表示する
-  }
+  const title = '卓球大会ポータル';
   const t = HtmlService.createTemplateFromFile('Index');
   return t
     .evaluate()
     .setTitle(title)
     .addMetaTag('viewport', 'width=device-width, initial-scale=1, viewport-fit=cover');
+}
+
+/**
+ * 初回に Apps Script エディタから1回だけ実行して、権限（スプレッドシートの作成・編集、トリガー）を承認する。
+ */
+function authorize() {
+  ScriptApp.getProjectTriggers();
+  CacheService.getScriptCache().get('x');
+  PropertiesService.getScriptProperties().getKeys();
+  if (false) SpreadsheetApp.create('authorize'); // スコープ検出用（実行はされない）
+  console.log('承認が完了しました。ウェブアプリとしてデプロイしてください。');
 }
 
 /** HTML テンプレートから他ファイルを読み込む */

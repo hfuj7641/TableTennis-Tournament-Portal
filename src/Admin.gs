@@ -2,19 +2,23 @@
  * 管理者向けの機能（設定・くじ番号・リーグ戦作成・当日追加）
  */
 
+/** 大会管理者パスワード（またはシステム管理者パスワード）を確認する */
 function checkAdmin_(pw) {
   const s = getSettings_();
+  if (isMaster_(pw)) return s;
   if (!s.adminPassword) throw new Error('「設定」シートで管理者パスワードを設定してください。');
   if (String(pw || '') !== s.adminPassword) throw new Error('管理者パスワードが違います。');
   return s;
 }
 
-function adminLogin(pw) {
+function adminLogin(tid, pw) {
+  useTournament_(tid);
   checkAdmin_(pw);
-  return adminGetData(pw);
+  return adminGetData(tid, pw);
 }
 
-function adminGetData(pw) {
+function adminGetData(tid, pw) {
+  useTournament_(tid);
   const settings = checkAdmin_(pw);
   const players = readPlayers_();
   const leagueRows = readLeagueRows_();
@@ -23,10 +27,15 @@ function adminGetData(pw) {
   leagueRows.forEach(function (r) { assigned[r.num] = r.league; });
 
   const elig = eligiblePlayers_(players);
+  const t = getTournament_(tid);
+  const url = webAppUrl_();
   const leagueNos = {};
   leagueRows.forEach(function (r) { leagueNos[r.league] = (leagueNos[r.league] || 0) + 1; });
 
   return JSON.stringify({
+    tournament: { id: tid, name: t ? t.name : settings.title, date: t ? t.date : '' },
+    ssUrl: ss_().getUrl(),
+    link: url ? url + '?t=' + tid : '',
     settings: settings,
     stats: {
       total: players.length,
@@ -52,37 +61,51 @@ function adminGetData(pw) {
   });
 }
 
+function adminAddSamplePlayers(tid, pw, n) {
+  useTournament_(tid);
+  checkAdmin_(pw);
+  addSamplePlayers_(Math.max(2, Math.min(100, Number(n) || 18)));
+  return JSON.stringify({ ok: true });
+}
+
 function pick_(p) {
   return { name: p.name, team: p.team, num: p.num, row: p.row };
 }
 
-function adminSaveSettings(pw, input) {
+function adminSaveSettings(tid, pw, input) {
+  useTournament_(tid);
   checkAdmin_(pw);
-  saveSettings_(input);
+  const next = saveSettings_(input);
+  if (next.title) updateTournament_(tid, { name: next.title });
   clearCache_();
-  return adminGetData(input && input.adminPassword ? input.adminPassword : pw);
+  return adminGetData(tid, isMaster_(pw) ? pw : next.adminPassword);
 }
 
-function adminAutoAssign(pw) {
+function adminAutoAssign(tid, pw) {
+  useTournament_(tid);
   checkAdmin_(pw);
   const res = autoAssignNumbers_();
   return JSON.stringify({ assigned: res.assigned });
 }
 
 /** 画面の設定値を保存してからリーグ戦を作成する */
-function adminCreateLeagues(pw, input, force) {
+function adminCreateLeagues(tid, pw, input, force) {
+  useTournament_(tid);
   checkAdmin_(pw);
   const s = input ? saveSettings_(input) : getSettings_();
+  if (input && s.title) updateTournament_(tid, { name: s.title });
   const res = createLeagues_(s, !!force);
   return JSON.stringify(res);
 }
 
-function adminAddPlayer(pw, num, leagueNo) {
+function adminAddPlayer(tid, pw, num, leagueNo) {
+  useTournament_(tid);
   checkAdmin_(pw);
   return JSON.stringify(addPlayerToLeague_(Number(num), Number(leagueNo)));
 }
 
-function adminExportStandings(pw) {
+function adminExportStandings(tid, pw) {
+  useTournament_(tid);
   checkAdmin_(pw);
   const snap = buildSnapshot_();
   putSnapshotCache_(snap);
@@ -90,7 +113,8 @@ function adminExportStandings(pw) {
   return JSON.stringify({ ok: true });
 }
 
-function adminClearCache(pw) {
+function adminClearCache(tid, pw) {
+  useTournament_(tid);
   checkAdmin_(pw);
   clearCache_();
   return JSON.stringify({ ok: true });

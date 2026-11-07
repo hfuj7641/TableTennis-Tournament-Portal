@@ -19,8 +19,15 @@ const LEAGUE_HEADERS = ['リーグ', 'くじ番号', '名前', '所属'];
 const STANDING_HEADERS = ['リーグ', '順位', 'くじ番号', '名前', '所属', '試合数', '勝', '敗', '勝率', '獲得セット', '失セット', 'セット率', '得点', '失点', '進出先', '状態'];
 
 function ss_() {
-  const id = PropertiesService.getScriptProperties().getProperty('SPREADSHEET_ID');
-  return id ? SpreadsheetApp.openById(id) : SpreadsheetApp.getActiveSpreadsheet();
+  if (CTX.ss) return CTX.ss;
+  if (CTX.ssId) {
+    CTX.ss = SpreadsheetApp.openById(CTX.ssId);
+    return CTX.ss;
+  }
+  // スプレッドシートに紐付いたスクリプトとして使う場合（メニューからの実行）
+  const active = SpreadsheetApp.getActiveSpreadsheet();
+  if (!active) throw new Error('大会が選択されていません。トップに戻って大会を選んでください。');
+  return active;
 }
 
 function sheet_(name) {

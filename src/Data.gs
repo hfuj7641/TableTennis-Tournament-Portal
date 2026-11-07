@@ -6,8 +6,13 @@
  * 試合結果の保存時には、ロック中にスナップショットを作り直してキャッシュを更新する。
  */
 
-const CACHE_KEY_BOOT = 'boot_v1';
-const CACHE_KEY_LEAGUE = 'league_v1_';
+const CACHE_KEY_BOOT = 'boot_v2';
+const CACHE_KEY_LEAGUE = 'league_v2_';
+
+/** 大会ごとにキャッシュのキーを分ける */
+function ck_(key) {
+  return (CTX.tid || 'bound') + ':' + key;
+}
 const MAX_LEAGUES_CACHE = 100;
 
 function buildSnapshot_(opt) {
@@ -76,9 +81,9 @@ function buildSnapshot_(opt) {
 function putSnapshotCache_(snap) {
   const cache = CacheService.getScriptCache();
   const items = {};
-  items[CACHE_KEY_BOOT] = JSON.stringify(snap.boot);
+  items[ck_(CACHE_KEY_BOOT)] = JSON.stringify(snap.boot);
   snap.leagueList.forEach(function (no) {
-    items[CACHE_KEY_LEAGUE + no] = JSON.stringify(snap.leagues[no]);
+    items[ck_(CACHE_KEY_LEAGUE + no)] = JSON.stringify(snap.leagues[no]);
   });
   try {
     cache.putAll(items, CACHE_TTL);
@@ -89,14 +94,14 @@ function putSnapshotCache_(snap) {
 }
 
 function clearCache_() {
-  const keys = [CACHE_KEY_BOOT];
-  for (let i = 1; i <= MAX_LEAGUES_CACHE; i++) keys.push(CACHE_KEY_LEAGUE + i);
+  const keys = [ck_(CACHE_KEY_BOOT)];
+  for (let i = 1; i <= MAX_LEAGUES_CACHE; i++) keys.push(ck_(CACHE_KEY_LEAGUE + i));
   CacheService.getScriptCache().removeAll(keys);
 }
 
 /** boot データ（JSON 文字列） */
 function getBootJson_() {
-  const cached = CacheService.getScriptCache().get(CACHE_KEY_BOOT);
+  const cached = CacheService.getScriptCache().get(ck_(CACHE_KEY_BOOT));
   if (cached) return cached;
   const snap = buildSnapshot_();
   putSnapshotCache_(snap);
@@ -106,7 +111,7 @@ function getBootJson_() {
 /** リーグのデータ（JSON 文字列） */
 function getLeagueJson_(no) {
   no = Number(no);
-  const cached = CacheService.getScriptCache().get(CACHE_KEY_LEAGUE + no);
+  const cached = CacheService.getScriptCache().get(ck_(CACHE_KEY_LEAGUE + no));
   if (cached) return cached;
   const snap = buildSnapshot_();
   putSnapshotCache_(snap);
