@@ -638,10 +638,12 @@
       (ctx.kind === 'tour' && m.table ? '<div class="table-big">台 ' + m.table + '</div>' : '') +
       '<div class="vs"><div><span class="num">' + m.p1 + '</span><br>' + nameHtml(m, 1) + '</div><div class="x">VS</div><div><span class="num">' + m.p2 + '</span><br>' + nameHtml(m, 2) + '</div></div></div>';
     if (E.wasStatus === STATUS.DONE) html += '<div class="notice warn">⚠️ 終了済みの試合の結果を修正しています。' + (ctx.kind === 'tour' ? '勝者を変える場合、次の試合がまだ始まっていなければ自動で差し替わります。' : '') + '</div>';
-    if (E.wasStatus === STATUS.PROGRESS) html += '<div class="notice info">' + (m.sets && m.sets.length ? '途中経過が保存されています。続きを入力してください。' : '試合中です。試合が終わったら全セットの得点を入力して保存してください。') + '</div>';
+    if (E.wasStatus === STATUS.PROGRESS) html += '<div class="notice info">' + (m.sets && m.sets.length || ctx.kind !== 'tour' ? '途中経過が保存されています。続きを入力してください。' : '試合中です。試合が終わったら全セットの得点を入力して保存してください。') + '</div>';
 
-    html += '<div class="section-title">進捗</div><div class="card"><div class="prog" id="prog">' + progHtml() + '</div>' +
-      '<div class="small muted" style="margin-top:8px">試合を始めたら「試合中」を選んで保存してください（得点は後から入力できます）。得点を入力すると自動で切り替わります。</div></div>';
+    if (ctx.kind === 'tour') { // 進捗の選択はトーナメントのみ（リーグ戦は得点から自動判定）
+      html += '<div class="section-title">進捗</div><div class="card"><div class="prog" id="prog">' + progHtml() + '</div>' +
+        '<div class="small muted" style="margin-top:8px">試合を始めたら「試合中」を選んで保存してください（得点は後から入力できます）。得点を入力すると自動で切り替わります。</div></div>';
+    }
 
     html += '<div class="section-title">各セットの得点</div><div class="card">' +
       '<div class="set-head"><span></span><span>' + nameHtml(m, 1) + '</span><span></span><span>' + nameHtml(m, 2) + '</span><span></span></div>';
@@ -656,7 +658,7 @@
     html += '<p class="small muted">試合の途中でも保存できます（途中経過として記録されます）。</p>';
     html += '<div class="entry-actions"><button class="btn" data-act="back" data-to="' + ctx.back.view + '" data-p="' + backP + '">キャンセル</button>' +
       '<button class="btn accent" data-act="save">💾 保存</button></div>';
-    if (E.wasStatus !== STATUS.NONE) html += '<button class="reset-link" data-act="reset">得点を消して「試合前」に戻す</button>';
+    if (E.wasStatus !== STATUS.NONE) html += '<button class="reset-link" data-act="reset">' + (ctx.kind === 'tour' ? '得点を消して「試合前」に戻す' : 'この試合の結果を消して「未実施」に戻す') + '</button>';
     html += '</div>';
     app.innerHTML = html;
     updateCalc(m);
@@ -672,6 +674,7 @@
 
   /** 得点の入力に合わせて進捗を自動で切り替える（手で選んだ「試合終了」は戻さない） */
   function autoProgress(m) {
+    if (!document.getElementById('prog')) return; // リーグ戦（進捗の選択なし）
     var E = S.entry, r = analyzeEntry(m), before = E.progress;
     if (r.winner) { if (E.progress !== 'done') { E.progress = 'done'; E.autoDone = true; } }
     else if (r.sets.length && E.progress === 'before') E.progress = 'playing';
@@ -732,6 +735,16 @@
     if (r.errors.length) {
       return alertBox('入力内容を確認してください', '<ul>' + r.errors.map(function (e) { return '<li>' + esc(e) + '</li>'; }).join('') + '</ul>');
     }
+    // リーグ戦: 進捗は選ばず、入力された得点から自動で判定する（途中なら「試合途中ですね？」と確認）
+    var askMidway = false;
+    if (ctx.kind !== 'tour') {
+      if (!r.sets.length) {
+        if (E.wasStatus !== STATUS.NONE) return doReset(ctx, m);
+        return alertBox('結果が入力されていません', '<p>各セットの得点を入力してください。</p>');
+      }
+      prog = r.winner ? 'done' : 'playing';
+      askMidway = !r.winner;
+    }
     if (prog === 'before') {
       if (r.sets.length) return alertBox('「試合前」を選んでいます', '<p>得点が入力されています。試合が始まっている場合は「試合中」または「試合終了」を選んでください。試合前に戻す場合は、得点を消してから保存してください。</p>');
       if (E.wasStatus === STATUS.NONE) return alertBox('変更はありません', '<p>この試合はまだ「試合前」です。試合を始めたら「試合中」を選んで保存してください。</p>', 'ℹ️');
@@ -757,7 +770,17 @@
     }
     chain.then(function (ok) {
       if (!ok) return false;
-      if (prog === 'playing') return true; // 試合中はそのまま保存
+      if (prog === 'playing' && askMidway) {
+        return modal({
+          title: '試合途中ですね？', icon: '⏸️',
+          html: '<p>まだどちらの選手も <b>' + r.n + 'セット</b> を取っていません（現在 ' + score + '）。</p>' +
+            '<p><b>試合途中</b>の場合は「途中経過として保存」を押してください。</p>' +
+            '<p class="notice warn" style="margin:0"><b>試合が終わっている場合</b>は「入力に戻る」を押して、<b>全セットの得点</b>を入力してください。</p>',
+          buttons: [{ label: '入力に戻る', value: false, cls: 'ghost' }, { label: '途中経過として保存', value: true, cls: 'accent' }],
+          dismissable: false,
+        });
+      }
+      if (prog === 'playing') return true; // トーナメントの「試合中」はそのまま保存
       var wn = r.winner === 1 ? m.n1 : m.n2;
       return modal({
         title: '試合結果を保存します', icon: '🏆',
@@ -775,7 +798,7 @@
   function doReset(ctx, m) {
     modal({
       title: '結果を消しますか？', icon: '🗑️',
-      html: '<p>' + esc(ctx.title(m)) + '（' + esc(m.n1) + ' vs ' + esc(m.n2) + '）を「試合前」に戻します。入力済みの得点は消えます。</p>',
+      html: '<p>' + esc(ctx.title(m)) + '（' + esc(m.n1) + ' vs ' + esc(m.n2) + '）' + (ctx.kind === 'tour' ? 'を「試合前」に戻します。入力済みの得点は消えます。' : 'の結果を消して「未実施」に戻します。') + '</p>',
       buttons: [{ label: 'やめる', value: false, cls: 'ghost' }, { label: '結果を消す', value: true, cls: 'danger' }],
     }).then(function (ok) {
       if (ok) submit(ctx, m, { matchId: m.id, ver: S.entry.ver, reset: true, progress: 'before' });
@@ -806,7 +829,7 @@
       ctx.apply(res);
       S.entry = null;
       if (S.boot) loadBoot(true).catch(function () {});
-      toast(payload.reset ? '試合前に戻しました' : payload.progress === 'playing' ? '「試合中」として保存しました' : '保存しました');
+      toast(payload.reset ? (ctx.kind === 'tour' ? '試合前に戻しました' : '結果を消しました') : payload.progress === 'playing' ? (ctx.kind === 'tour' ? '「試合中」として保存しました' : '途中経過を保存しました') : '保存しました');
       go(ctx.back.view, ctx.back.params, true);
     }).catch(function (e) {
       busy(false);
