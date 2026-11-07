@@ -16,6 +16,9 @@ const STATUS = {
   DONE: '終了',
 };
 
+/** 画面の下に表示するバージョン（デプロイが更新されているかの確認用） */
+const APP_VERSION = '2.0（大会選択対応）';
+
 /** 1試合で記録できる最大セット数（7セットマッチまで対応） */
 const MAX_SETS = 7;
 
@@ -54,6 +57,7 @@ const MATCH_HEADERS = [
 function doGet() {
   const title = '卓球大会ポータル';
   const t = HtmlService.createTemplateFromFile('Index');
+  t.version = APP_VERSION;
   return t
     .evaluate()
     .setTitle(title)
