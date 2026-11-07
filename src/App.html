@@ -872,6 +872,7 @@
       S.admin = r[0];
       S.mode = 'admin';
       go('admin', {});
+      showAutoAdded(r[0]);
     }).catch(function (e) { busy(false); showError(e); });
   }
 
@@ -930,6 +931,10 @@
       '<div class="form-row"><label>下位トーナメントのセット数</label><select name="lowerSets">' + opt(s.lowerSets) + '</select></div>' +
       '</div>' +
       '<div class="form-row"><label>上位トーナメント進出人数（各リーグ）</label><input name="advanceCount" type="number" min="1" inputmode="numeric" value="' + s.advanceCount + '"></div>' +
+      '<div class="form-row"><label>遅れて来た選手をリーグに自動追加</label><select name="autoAssignLate" data-bool="1">' +
+      '<option value="1"' + (s.autoAssignLate ? ' selected' : '') + '>する（人数の少ないリーグへ自動で追加）</option>' +
+      '<option value="0"' + (!s.autoAssignLate ? ' selected' : '') + '>しない（管理者が手動で追加）</option></select>' +
+      '<div class="hint">リーグ作成後に「参加者」シートで参加・支払確認が付いた選手を、自動でリーグに入れて試合を追加します。くじ番号が空欄なら自動で付けます。</div></div>' +
       '<div class="grid2">' +
       '<div class="form-row"><label>選手入力パスコード</label><input name="entryCode" value="' + esc(s.entryCode) + '" autocomplete="off"><div class="hint">空欄なら不要</div></div>' +
       '<div class="form-row"><label>管理者パスワード</label><input name="adminPassword" value="' + esc(s.adminPassword) + '" autocomplete="off"></div>' +
@@ -943,12 +948,17 @@
       '<p class="small muted">上の設定を保存してから、参加・支払済みでくじ番号のある選手をランダムにリーグへ振り分け、総当たりの試合表を作成します。</p></div>';
 
     if (A.leagues.length) {
-      html += '<div class="section-title">当日参加の選手をリーグに追加</div><div class="card">';
+      html += '<div class="section-title">遅れて来た選手をリーグに追加</div><div class="card">' +
+        '<p class="small muted" style="margin-top:0">' + (s.autoAssignLate
+          ? '自動追加：<b>オン</b>。「参加者」シートに選手を追加して参加・支払確認を付けると、人数の少ないリーグへ自動で追加されます（くじ番号が空欄なら自動で付きます）。'
+          : '自動追加：<b>オフ</b>。下で追加先のリーグを選んで追加してください。') + '</p>';
+      if (A.unassigned.length && s.autoAssignLate) html += '<button class="btn accent block" data-act="adm-late" style="margin-bottom:12px">今すぐ自動で追加する（' + A.unassigned.length + '名）</button>';
       if (A.unassigned.length) {
         html += '<div class="grid2"><div class="form-row"><label>選手</label><select id="add-num">' + A.unassigned.map(function (p) { return '<option value="' + p.num + '">' + p.num + ' ' + esc(p.name) + '</option>'; }).join('') + '</select></div>' +
           '<div class="form-row"><label>追加先リーグ</label><select id="add-league">' + A.leagues.map(function (l) { return '<option value="' + l.no + '">リーグ' + l.no + '（' + l.count + '名）</option>'; }).join('') + '</select></div></div>' +
           '<button class="btn block" data-act="adm-add">リーグに追加（試合を追加作成）</button>';
       } else html += '<p class="muted small" style="margin:0">リーグに入っていない対象選手はいません。</p>';
+      html += '<div class="hint small muted" style="margin-top:8px">手動で選ぶ場合は、上のプルダウンで選手と追加先を選んでください。</div>';
       html += '</div>';
     }
 
@@ -965,7 +975,7 @@
     var f = document.getElementById('adm-form');
     var out = {};
     f.querySelectorAll('input[name],select[name]').forEach(function (el) {
-      out[el.name] = el.type === 'number' || el.tagName === 'SELECT' ? parseInt(el.value, 10) : el.value;
+      out[el.name] = el.getAttribute('data-bool') ? el.value === '1' : el.type === 'number' || el.tagName === 'SELECT' ? parseInt(el.value, 10) : el.value;
     });
     return out;
   }
@@ -974,7 +984,7 @@
     var el = document.getElementById('adm-preview');
     if (!el || !S.admin) return;
     var f = adminForm();
-    var N = S.admin.stats.eligible;
+    var N = S.admin.stats.eligible + S.admin.missingNumber.length;
     var L = f.leagueCount || 0;
     var per = f.playersPerLeague || 0;
     var rec = per ? Math.max(1, Math.round(N / per)) : 0;
@@ -1000,7 +1010,21 @@
   }
 
   function adminReload() {
-    return adminCall('adminGetData').then(function (d) { S.admin = d; render(); });
+    return adminCall('adminGetData').then(function (d) { S.admin = d; render(); showAutoAdded(d); });
+  }
+
+  /** 自動追加された選手がいれば知らせる */
+  function showAutoAdded(d) {
+    var list = (d && d.autoAdded || []).filter(function (a) { return !a.none; });
+    if (!list.length) {
+      if (d && d.autoAdded && d.autoAdded.length) toast('追加が必要な選手はいませんでした');
+      return;
+    }
+    S.leagues = {};
+    loadBoot(true).catch(function () {});
+    alertBox('遅れて来た選手をリーグに追加しました', '<ul>' + list.map(function (a) {
+      return '<li><b>' + esc(a.name) + '</b>（' + a.num + '番）→ リーグ' + a.league + '（' + a.matches + '試合を追加）</li>';
+    }).join('') + '</ul>', '✅');
   }
 
   function adminLogin() {
@@ -1019,6 +1043,7 @@
         S.admin = d;
         S.mode = 'admin';
         go('admin', {});
+        showAutoAdded(d);
       }).catch(function (e) { busy(false); showError(e); });
     });
   }
@@ -1027,7 +1052,7 @@
     var f = adminForm();
     var go2 = force ? Promise.resolve(true) : modal({
       title: 'リーグ戦を作成しますか？', icon: '🎲',
-      html: '<p>現在の設定（' + f.leagueCount + 'リーグ・' + f.leagueSets + 'セットマッチ）で、対象選手 ' + S.admin.stats.eligible + ' 名をランダムに振り分けます。</p>',
+      html: '<p>現在の設定（' + f.leagueCount + 'リーグ・' + f.leagueSets + 'セットマッチ）で、対象選手 ' + (S.admin.stats.eligible + S.admin.missingNumber.length) + ' 名（くじ番号が空欄の選手には自動で番号を付けます）をランダムに振り分けます。</p>',
       buttons: [{ label: 'やめる', value: false, cls: 'ghost' }, { label: '作成する', value: true, cls: 'accent' }],
     });
     go2.then(function (ok) {
@@ -1152,6 +1177,9 @@
         break;
       case 'reset':
         doReset(L, findMatch(L, S.params.id));
+        break;
+      case 'adm-late':
+        adminCall('adminAutoAssignLate').then(function (d) { S.admin = d; render(); showAutoAdded(d); }).catch(function () {});
         break;
       case 'adm-reload':
         adminReload().catch(function () {});

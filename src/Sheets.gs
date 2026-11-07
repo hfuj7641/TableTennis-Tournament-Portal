@@ -10,6 +10,7 @@ const SETTING_DEFS = [
   { key: 'upperSets', label: '上位トーナメントのセット数', def: 5, type: 'sets', desc: '5 = 5セットマッチ（3セット先取）' },
   { key: 'lowerSets', label: '下位トーナメントのセット数', def: 3, type: 'sets', desc: '3 = 3セットマッチ（2セット先取）' },
   { key: 'advanceCount', label: '上位トーナメント進出人数（各リーグ）', def: 2, type: 'int', desc: '各リーグの上位何名が上位トーナメントに進むか' },
+  { key: 'autoAssignLate', label: '遅れて来た選手をリーグに自動追加', def: true, type: 'bool', desc: 'TRUE なら、リーグ作成後に参加・支払確認が付いた選手を人数の少ないリーグへ自動で追加します（くじ番号が空欄なら自動で付けます）' },
   { key: 'adminPassword', label: '管理者パスワード', def: 'admin', type: 'string', desc: 'Web の管理者メニューに入るためのパスワード。必ず変更してください' },
   { key: 'entryCode', label: '選手入力パスコード', def: '', type: 'string', desc: '空欄なら不要。設定すると「選手用」に入るときに入力を求めます' },
 ];
@@ -138,6 +139,7 @@ function getSettings_() {
 }
 
 function normalizeSetting_(d, v) {
+  if (d.type === 'bool') return truthy_(v);
   if (d.type === 'string') return String(v == null ? '' : v).trim();
   const n = parseInt(v, 10);
   return isNaN(n) ? d.def : n;
@@ -267,24 +269,28 @@ function duplicateNumbers_(players) {
     .map(function (k) { return { num: Number(k), names: seen[k] }; });
 }
 
-/** 参加・支払済みでくじ番号が空欄の選手に、未使用の番号をランダムに割り当てる */
+/** 参加・支払済みでくじ番号が空欄の選手に、未使用の番号をランダムに割り当てる（ロックは呼び出し側） */
+function assignMissingNumbersCore_() {
+  const sh = sheet_(SHEET.PLAYERS);
+  const c = playerColumns_(sh);
+  const players = readPlayers_();
+  const used = {};
+  players.forEach(function (p) { if (p.num != null) used[p.num] = true; });
+  const targets = players.filter(function (p) { return p.attend && p.paid && p.num == null && String(p.rawNum == null ? '' : p.rawNum).trim() === ''; });
+  const free = [];
+  for (let n = 1; free.length < targets.length; n++) if (!used[n]) free.push(n);
+  const picks = shuffle_(free);
+  return targets.map(function (p, i) {
+    sh.getRange(p.row, c.num + 1).setValue(picks[i]);
+    return { name: p.name, num: picks[i] };
+  });
+}
+
 function autoAssignNumbers_() {
   const lock = LockService.getScriptLock();
   lock.waitLock(30000);
   try {
-    const sh = sheet_(SHEET.PLAYERS);
-    const c = playerColumns_(sh);
-    const players = readPlayers_();
-    const used = {};
-    players.forEach(function (p) { if (p.num != null) used[p.num] = true; });
-    const targets = players.filter(function (p) { return p.attend && p.paid && p.num == null && String(p.rawNum).trim() === ''; });
-    const free = [];
-    for (let n = 1; free.length < targets.length; n++) if (!used[n]) free.push(n);
-    const picks = shuffle_(free);
-    const assigned = targets.map(function (p, i) {
-      sh.getRange(p.row, c.num + 1).setValue(picks[i]);
-      return { name: p.name, num: picks[i] };
-    });
+    const assigned = assignMissingNumbersCore_();
     clearCache_();
     return { assigned: assigned };
   } finally {

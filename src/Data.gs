@@ -100,10 +100,30 @@ function clearCache_() {
 }
 
 /** boot データ（JSON 文字列） */
+/**
+ * キャッシュが無いときにスナップショットを作り直す。
+ * ついでに、遅れて来た選手（リーグ作成後に参加・支払済みになった選手）がいればリーグに自動追加する。
+ * （編集トリガーが動かなかった場合の保険。普段の読み込みでは追加の読み取りは発生しない）
+ */
+function buildFreshSnapshot_() {
+  const settings = getSettings_();
+  const players = readPlayers_();
+  const leagueRows = readLeagueRows_();
+  if (settings.autoAssignLate && lateCandidates_(players, leagueRows).length) {
+    try {
+      const res = autoAssignLatePlayers_();
+      if (res.snap) return res.snap;
+    } catch (err) {
+      console.warn('auto assign failed: ' + err);
+    }
+  }
+  return buildSnapshot_({ settings: settings, players: players, leagueRows: leagueRows });
+}
+
 function getBootJson_() {
   const cached = CacheService.getScriptCache().get(ck_(CACHE_KEY_BOOT));
   if (cached) return cached;
-  const snap = buildSnapshot_();
+  const snap = buildFreshSnapshot_();
   putSnapshotCache_(snap);
   return JSON.stringify(snap.boot);
 }
@@ -113,7 +133,7 @@ function getLeagueJson_(no) {
   no = Number(no);
   const cached = CacheService.getScriptCache().get(ck_(CACHE_KEY_LEAGUE + no));
   if (cached) return cached;
-  const snap = buildSnapshot_();
+  const snap = buildFreshSnapshot_();
   putSnapshotCache_(snap);
   if (!snap.leagues[no]) throw new Error('リーグ ' + no + ' は存在しません。');
   return JSON.stringify(snap.leagues[no]);

@@ -17,9 +17,10 @@ function adminLogin(tid, pw) {
   return adminGetData(tid, pw);
 }
 
-function adminGetData(tid, pw) {
+function adminGetData(tid, pw, autoAdded) {
   useTournament_(tid);
   const settings = checkAdmin_(pw);
+  if (!autoAdded) autoAdded = autoAssignLatePlayers_().added;
   const players = readPlayers_();
   const leagueRows = readLeagueRows_();
   const matches = valuesToMatches_(readMatchValues_());
@@ -37,6 +38,7 @@ function adminGetData(tid, pw) {
     ssUrl: ss_().getUrl(),
     link: url ? url + '?t=' + tid : '',
     settings: settings,
+    autoAdded: autoAdded || [],
     stats: {
       total: players.length,
       attend: players.filter(function (p) { return p.attend; }).length,
@@ -104,6 +106,13 @@ function adminAddPlayer(tid, pw, num, leagueNo) {
   return JSON.stringify(addPlayerToLeague_(Number(num), Number(leagueNo)));
 }
 
+function adminAutoAssignLate(tid, pw) {
+  useTournament_(tid);
+  checkAdmin_(pw);
+  const res = autoAssignLatePlayers_();
+  return adminGetData(tid, pw, res.added.length ? res.added : [{ none: true }]);
+}
+
 function adminExportStandings(tid, pw) {
   useTournament_(tid);
   checkAdmin_(pw);
@@ -147,6 +156,7 @@ function createLeagues_(settings, force) {
   try {
     validateSettings_(settings);
     const L = settings.leagueCount;
+    assignMissingNumbersCore_(); // 参加・支払済みでくじ番号が空欄の選手にも番号を付けて対象に含める
     const players = readPlayers_();
     const dup = duplicateNumbers_(players);
     if (dup.length) {
@@ -221,46 +231,132 @@ function writePlayerLeagueColumn_(leagueValues) {
   sh.getRange(2, c.league + 1, last - 1, 1).setValues(col);
 }
 
-/** 当日参加などで、作成済みのリーグに選手を追加する（既存選手との試合を追加） */
+/**
+ * 選手1名をリーグに追加し、そのリーグの全選手との試合を作る（ロック・キャッシュ更新は呼び出し側）。
+ * 戻り値: 追加した試合数
+ */
+function addPlayerCore_(p, leagueNo, settings) {
+  const leagueRows = readLeagueRows_();
+  if (leagueRows.some(function (r) { return r.num === p.num; })) throw new Error(p.name + ' さんは既にリーグに入っています。');
+  const members = leagueRows.filter(function (r) { return r.league === leagueNo; });
+  if (!members.length) throw new Error('リーグ ' + leagueNo + ' が見つかりません。');
+
+  const matches = valuesToMatches_(readMatchValues_()).filter(function (m) { return m.league === leagueNo; });
+  const bestOf = matches.length ? matches[0].bestOf : settings.leagueSets;
+  let no = matches.reduce(function (mx, m) { return Math.max(mx, m.no || 0); }, 0);
+
+  sheet_(SHEET.LEAGUES).appendRow([leagueNo, p.num, p.name, p.team]);
+
+  const rows = members.map(function (m) {
+    no++;
+    const a = { num: m.num, name: m.name };
+    const b = { num: p.num, name: p.name };
+    return m.num < p.num ? newMatchRow_(leagueNo, no, a, b, bestOf) : newMatchRow_(leagueNo, no, b, a, bestOf);
+  });
+  const msh = sheet_(SHEET.MATCHES);
+  const start = msh.getLastRow() + 1;
+  msh.getRange(start, MCOL.SET0 + 1, rows.length, MAX_SETS).setNumberFormat('@');
+  msh.getRange(start, 1, rows.length, MATCH_HEADERS.length).setValues(rows);
+  return rows.length;
+}
+
+function refreshAfterLeagueChange_(settings) {
+  writePlayerLeagueColumn_(readLeagueRows_().map(function (r) { return [r.league, r.num]; }));
+  const snap = buildSnapshot_({ settings: settings });
+  putSnapshotCache_(snap);
+  writeStandingsSheet_(snap);
+  SpreadsheetApp.flush();
+  return snap;
+}
+
+/** 当日参加などで、作成済みのリーグに選手を追加する（管理者が追加先を選ぶ場合） */
 function addPlayerToLeague_(num, leagueNo) {
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(30000)) throw new Error('他の処理が実行中です。少し待ってから再度実行してください。');
   try {
     const settings = getSettings_();
-    const players = readPlayers_();
-    const p = eligiblePlayers_(players).filter(function (x) { return x.num === num; })[0];
+    const p = eligiblePlayers_(readPlayers_()).filter(function (x) { return x.num === num; })[0];
     if (!p) throw new Error('くじ番号 ' + num + ' の参加・支払済み選手が見つかりません。');
-    const leagueRows = readLeagueRows_();
-    if (leagueRows.some(function (r) { return r.num === num; })) throw new Error(p.name + ' さんは既にリーグに入っています。');
-    const members = leagueRows.filter(function (r) { return r.league === leagueNo; });
-    if (!members.length) throw new Error('リーグ ' + leagueNo + ' が見つかりません。');
-
-    const matches = valuesToMatches_(readMatchValues_()).filter(function (m) { return m.league === leagueNo; });
-    const bestOf = matches.length ? matches[0].bestOf : settings.leagueSets;
-    let no = matches.reduce(function (mx, m) { return Math.max(mx, m.no || 0); }, 0);
-
-    const lsh = sheet_(SHEET.LEAGUES);
-    lsh.appendRow([leagueNo, p.num, p.name, p.team]);
-
-    const rows = members.map(function (m) {
-      no++;
-      const a = { num: m.num, name: m.name };
-      const b = { num: p.num, name: p.name };
-      return m.num < p.num ? newMatchRow_(leagueNo, no, a, b, bestOf) : newMatchRow_(leagueNo, no, b, a, bestOf);
-    });
-    const msh = sheet_(SHEET.MATCHES);
-    const start = msh.getLastRow() + 1;
-    msh.getRange(start, MCOL.SET0 + 1, rows.length, MAX_SETS).setNumberFormat('@');
-    msh.getRange(start, 1, rows.length, MATCH_HEADERS.length).setValues(rows);
-
-    writePlayerLeagueColumn_(readLeagueRows_().map(function (r) { return [r.league, r.num]; }));
-
-    const snap = buildSnapshot_({ settings: settings });
-    putSnapshotCache_(snap);
-    writeStandingsSheet_(snap);
-    SpreadsheetApp.flush();
-    return { ok: true, name: p.name, league: leagueNo, added: rows.length };
+    const added = addPlayerCore_(p, leagueNo, settings);
+    refreshAfterLeagueChange_(settings);
+    return { ok: true, name: p.name, league: leagueNo, added: added };
   } finally {
     lock.releaseLock();
   }
+}
+
+/* ------------------------------------------------------------------ */
+/* 遅れて来た選手の自動追加                                              */
+/* ------------------------------------------------------------------ */
+
+/**
+ * リーグ作成後に「参加確認・支払確認」が付いたのに、まだリーグに入っていない選手。
+ * くじ番号が空欄の選手も含む（自動で番号を付ける）。
+ */
+function lateCandidates_(players, leagueRows) {
+  if (!leagueRows.length) return [];
+  const assigned = {};
+  leagueRows.forEach(function (r) { assigned[r.num] = true; });
+  return players.filter(function (p) {
+    if (!p.attend || !p.paid) return false;
+    if (p.num == null) return String(p.rawNum == null ? '' : p.rawNum).trim() === '';
+    return !assigned[p.num];
+  });
+}
+
+/**
+ * 遅れて来た選手を、人数の少ないリーグへ自動で追加する。
+ * （人数が同じリーグが複数あるときはその中からランダム）
+ * 戻り値: { added: [{ name, num, league, matches }], snap }
+ */
+function autoAssignLatePlayers_() {
+  const settings = getSettings_();
+  if (!settings.autoAssignLate) return { added: [] };
+  if (!lateCandidates_(readPlayers_(), readLeagueRows_()).length) return { added: [] };
+
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(15000)) return { added: [] }; // 次の機会に再実行される
+  try {
+    // ロック取得後に読み直す（同時に別の処理が追加済みかもしれないため）
+    assignMissingNumbersCore_();
+    const players = readPlayers_();
+    let leagueRows = readLeagueRows_();
+    const dupNums = {};
+    duplicateNumbers_(players).forEach(function (d) { dupNums[d.num] = true; });
+    const cands = lateCandidates_(players, leagueRows).filter(function (p) { return p.num != null && !dupNums[p.num]; });
+    if (!cands.length) return { added: [] };
+
+    const added = [];
+    cands.forEach(function (p) {
+      const counts = {};
+      leagueRows.forEach(function (r) { counts[r.league] = (counts[r.league] || 0) + 1; });
+      const nos = Object.keys(counts).map(Number);
+      const min = Math.min.apply(null, nos.map(function (n) { return counts[n]; }));
+      const choices = nos.filter(function (n) { return counts[n] === min; });
+      const leagueNo = choices[Math.floor(Math.random() * choices.length)];
+      const n = addPlayerCore_(p, leagueNo, settings);
+      added.push({ name: p.name, num: p.num, league: leagueNo, matches: n, row: p.row });
+      leagueRows = readLeagueRows_();
+    });
+
+    writeAutoAddNotes_(added);
+    const snap = refreshAfterLeagueChange_(settings);
+    return { added: added, snap: snap };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/** 参加者シートの「備考」に自動追加したことを書いておく */
+function writeAutoAddNotes_(added) {
+  if (!added.length) return;
+  const sh = sheet_(SHEET.PLAYERS);
+  const c = playerColumns_(sh);
+  if (c.note < 0) return;
+  const stamp = Utilities.formatDate(new Date(), 'Asia/Tokyo', 'HH:mm');
+  added.forEach(function (a) {
+    const cell = sh.getRange(a.row, c.note + 1);
+    const cur = String(cell.getValue() || '');
+    cell.setValue((cur ? cur + ' / ' : '') + '自動追加: リーグ' + a.league + '（' + stamp + '）');
+  });
 }

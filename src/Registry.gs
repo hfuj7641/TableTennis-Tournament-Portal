@@ -275,8 +275,12 @@ function handleTournamentEdit(e) {
     const t = listTournaments_().filter(function (x) { return x.ssId === ssId; })[0];
     if (!t) return;
     CTX.tid = t.id;
+    CTX.ssId = t.ssId;
+    CTX.ss = e.source;
     clearCache_();
+    // 参加者シートの編集なら、遅れて来た選手をリーグへ自動追加
+    if (e.range && e.range.getSheet().getName() === SHEET.PLAYERS) autoAssignLatePlayers_();
   } catch (err) {
-    // 無視
+    console.warn('handleTournamentEdit: ' + err);
   }
 }
