@@ -279,7 +279,10 @@ function handleTournamentEdit(e) {
     CTX.ss = e.source;
     clearCache_();
     // 参加者シートの編集なら、遅れて来た選手をリーグへ自動追加
-    if (e.range && e.range.getSheet().getName() === SHEET.PLAYERS) autoAssignLatePlayers_();
+    if (e.range && e.range.getSheet().getName() === SHEET.PLAYERS) {
+      autoAssignLatePlayers_();
+      syncWithdrawals_(); // 棄権のチェック → トーナメントの不戦敗
+    }
   } catch (err) {
     console.warn('handleTournamentEdit: ' + err);
   }

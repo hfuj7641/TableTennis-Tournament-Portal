@@ -17,7 +17,7 @@ const SETTING_DEFS = [
   { key: 'entryCode', label: '選手入力パスコード', def: '', type: 'string', desc: '空欄なら不要。設定すると「選手用」に入るときに入力を求めます' },
 ];
 
-const PLAYER_HEADERS = ['名前', '所属', '参加確認', '支払確認', 'くじ番号', 'リーグ', '備考'];
+const PLAYER_HEADERS = ['名前', '所属', '参加確認', '支払確認', 'くじ番号', 'リーグ', '備考', '棄権'];
 const LEAGUE_HEADERS = ['リーグ', 'くじ番号', '名前', '所属'];
 const STANDING_HEADERS = ['リーグ', '順位', 'くじ番号', '名前', '所属', '試合数', '勝', '敗', '勝率', '獲得セット', '失セット', 'セット率', '得点', '失点', '進出先', '状態'];
 
@@ -75,6 +75,7 @@ function setupSheets_() {
   const rule = SpreadsheetApp.newDataValidation().requireCheckbox().build();
   sh.getRange(2, pc.attend + 1, 500, 1).setDataValidation(rule);
   sh.getRange(2, pc.paid + 1, 500, 1).setDataValidation(rule);
+  ensureWithdrawColumn_();
 
   // リーグ（システムが書き込む）
   sh = ss.getSheetByName(SHEET.LEAGUES) || ss.insertSheet(SHEET.LEAGUES);
@@ -212,6 +213,7 @@ function playerColumns_(sh) {
     num: find(['くじ番号', '番号', 'くじ']),
     league: find(['リーグ']),
     note: find(['備考']),
+    withdrawn: find(['棄権', '途中帰宅', '帰宅']),
   };
   const missing = [];
   if (c.name < 0) missing.push('名前');
@@ -250,6 +252,7 @@ function readPlayers_() {
       name: name,
       team: c.team >= 0 ? String(r[c.team] == null ? '' : r[c.team]).trim() : '',
       attend: truthy_(r[c.attend]),
+      withdrawn: c.withdrawn >= 0 ? truthy_(r[c.withdrawn]) : false,
       paid: truthy_(r[c.paid]),
       num: toNum_(r[c.num]),
       rawNum: r[c.num],
@@ -257,6 +260,27 @@ function readPlayers_() {
     });
   }
   return out;
+}
+
+/**
+ * 「参加者」シートに「棄権」列（チェックボックス）が無ければ追加する。
+ * 途中で帰った選手にチェックを入れると、トーナメントの試合が不戦敗になる。
+ */
+function ensureWithdrawColumn_() {
+  const sh = sheet_(SHEET.PLAYERS);
+  const c = playerColumns_(sh);
+  if (c.withdrawn >= 0) return false;
+  const col = Math.max(sh.getLastColumn(), 1) + 1;
+  sh.getRange(1, col).setValue('棄権').setFontWeight('bold').setBackground('#fdecec');
+  sh.getRange(2, col, 500, 1).setDataValidation(SpreadsheetApp.newDataValidation().requireCheckbox().build());
+  return true;
+}
+
+/** 棄権した選手のくじ番号 → true */
+function withdrawnSet_(players) {
+  const w = {};
+  (players || readPlayers_()).forEach(function (p) { if (p.withdrawn && p.num != null) w[p.num] = true; });
+  return w;
 }
 
 function eligiblePlayers_(players) {

@@ -21,6 +21,8 @@ function adminGetData(tid, pw, autoAdded) {
   useTournament_(tid);
   const settings = checkAdmin_(pw);
   if (!autoAdded) autoAdded = autoAssignLatePlayers_().added;
+  ensureWithdrawColumn_();
+  syncWithdrawals_();
   const players = readPlayers_();
   const leagueRows = readLeagueRows_();
   const matches = valuesToMatches_(readMatchValues_());
@@ -46,6 +48,7 @@ function adminGetData(tid, pw, autoAdded) {
       attendPaid: players.filter(function (p) { return p.attend && p.paid; }).length,
       eligible: elig.length,
     },
+    withdrawn: players.filter(function (p) { return p.withdrawn; }).map(pick_),
     attendNotPaid: players.filter(function (p) { return p.attend && !p.paid; }).map(pick_),
     missingNumber: players.filter(function (p) { return p.attend && p.paid && p.num == null; }).map(pick_),
     duplicates: duplicateNumbers_(players),

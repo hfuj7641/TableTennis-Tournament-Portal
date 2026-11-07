@@ -99,7 +99,9 @@
   function nameHtml(m, side) {
     var n = side === 1 ? m.r1 : m.r2, t = side === 1 ? m.t1 : m.t2;
     if (n === undefined) return esc(side === 1 ? m.n1 : m.n2);
-    return '<span class="nb">' + esc(n) + '</span>' + (t ? '<span class="nb team">（' + esc(t) + '）</span>' : '');
+    var html = '<span class="nb">' + esc(n) + '</span>' + (t ? '<span class="nb team">（' + esc(t) + '）</span>' : '');
+    if (side === 1 ? m.w1 : m.w2) html = '<span class="badge wdb">棄権</span> <span class="wd">' + html + '</span>';
+    return html;
   }
 
   function need(bestOf) { return Math.floor(bestOf / 2) + 1; }
@@ -384,7 +386,7 @@
     return list.map(function (p) {
       if (tourPhase && p.tour) {
         return '<button class="name-item" data-act="open-tplayer" data-type="' + tourKey(p.tour) + '" data-num="' + p.num + '">' +
-          '<span class="num">' + p.num + '</span><span class="nm">' + esc(withTeam(p.name, p.team)) + '</span>' +
+          '<span class="num">' + p.num + '</span><span class="nm">' + (p.withdrawn ? '<span class="wd">' + esc(withTeam(p.name, p.team)) + '</span> ' + '<span class="badge wdb">棄権</span>' : esc(withTeam(p.name, p.team))) + '</span>' +
           '<span class="lg">' + esc(p.tour) + 'T ›</span></button>';
       }
       return '<button class="name-item" data-act="open-player" data-league="' + p.league + '" data-num="' + p.num + '">' +
@@ -560,11 +562,12 @@
   }
 
   function playable(m) {
-    return !!(m.p1 && m.p2) && m.status !== '不戦勝' && m.status !== '待機';
+    return !!(m.p1 && m.p2) && m.status !== '不戦勝' && m.status !== '待機' && !m.wo;
   }
 
   function tableText(m) {
     if (m.status === '不戦勝') return '不戦勝';
+    if (m.wo) return '不戦勝（棄権）';
     if (m.status === '待機') return '対戦相手待ち';
     if (m.status === STATUS.DONE) return m.table ? '台' + m.table + 'で実施' : '';
     if (m.table) return m.status === STATUS.PROGRESS ? '台' + m.table + 'で試合中' : '台' + m.table + 'で試合';
@@ -584,7 +587,7 @@
     var html = '<div class="small muted" style="text-align:center">' + esc(ctx.head) + ' ・ ' + m.bestOf + 'セットマッチ ・ <span class="badge ' + statusClass(m.status) + '">' + esc(m.status) + '</span>' +
       (ctx.kind === 'tour' && tableText(m) ? ' ・ <b class="table-tag">' + esc(tableText(m)) + '</b>' : '') + '</div>' +
       '<div class="detail-score"><div class="pn">' + pl(1) + '</div>' +
-      '<div class="sc">' + (m.status === STATUS.DONE || m.status === STATUS.PROGRESS ? m.c1 + ' - ' + m.c2 : '<span class="muted" style="font-size:18px">VS</span>') + '</div>' +
+      '<div class="sc">' + (m.wo ? '<span style="font-size:18px">不戦勝</span>' : m.status === STATUS.DONE || m.status === STATUS.PROGRESS ? m.c1 + ' - ' + m.c2 : '<span class="muted" style="font-size:18px">VS</span>') + '</div>' +
       '<div class="pn">' + pl(2) + '</div></div>';
     if (m.sets && m.sets.length) {
       html += '<div class="table-wrap" style="box-shadow:none;border:1px solid var(--line)"><table class="detail-sets"><thead><tr><th>セット</th><th>' + esc(m.n1) + '</th><th>' + esc(m.n2) + '</th></tr></thead><tbody>' +
@@ -596,6 +599,7 @@
     } else if (m.status === '待機') {
       html += '<p class="muted" style="text-align:center">前の試合の勝者が決まると対戦相手が決まります。</p>';
     }
+    if (m.wo) html += '<div class="notice warn">' + esc(m.wo === m.p1 ? m.n1 : m.n2) + ' さんの棄権により、' + esc(m.wo === m.p1 ? m.n2 : m.n1) + ' さんの不戦勝です。</div>';
     if (m.updated) html += '<p class="small muted" style="text-align:right;margin:8px 0 0">最終更新 ' + esc(m.updated) + '</p>';
 
     var buttons = [{ label: '閉じる', value: null, cls: 'ghost' }];
@@ -909,7 +913,7 @@
         var name = num ? nameHtml(m, side) : (m.status === '不戦勝' ? '<span class="muted">（不戦勝）</span>' : '<span class="muted">未定</span>');
         return '<div class="brow' + (won ? ' won' : '') + (lost ? ' lost' : '') + (focus && num === focus ? ' me' : '') + '">' +
           '<span class="seed">' + (seed || '') + '</span><span class="bname">' + name + '</span>' +
-          '<span class="bsc">' + (m.status === STATUS.DONE || m.status === STATUS.PROGRESS ? c : '') + '</span></div>';
+          '<span class="bsc">' + (m.wo ? '' : m.status === STATUS.DONE || m.status === STATUS.PROGRESS ? c : '') + '</span></div>';
       };
       var tag = tableText(m);
       boxes += '<button class="bm st-' + statusClass(m.status) + (m.status === '不戦勝' ? ' bye' : '') + (m.table && (m.status === STATUS.NONE || m.status === STATUS.PROGRESS) ? ' ontable' : '') + (mine ? ' mine' : '') + '" style="left:' + x + 'px;top:' + (y - H / 2) + 'px;width:' + W + 'px;height:' + H + 'px" data-act="tmatch" data-id="' + esc(m.id) + '">' +
@@ -947,7 +951,7 @@
       '<div class="m-head"><span>' + esc(m.type + 'T ' + m.roundName) + '</span><span class="sp"></span>' +
       (tableText(m) ? '<b class="table-tag">' + esc(tableText(m)) + '</b>' : '') + '<span class="badge ' + st + '">' + esc(m.status) + '</span></div>' +
       '<div class="m-body"><div class="m-pl' + (w1 ? ' win' : '') + '">' + pl(1) + '</div>' +
-      (m.status === STATUS.DONE || m.status === STATUS.PROGRESS ? '<div class="m-score">' + m.c1 + ' - ' + m.c2 + '</div>' : '<div class="m-score vs">VS</div>') +
+      (m.wo ? '<div class="m-score vs">不戦勝</div>' : m.status === STATUS.DONE || m.status === STATUS.PROGRESS ? '<div class="m-score">' + m.c1 + ' - ' + m.c2 + '</div>' : '<div class="m-score vs">VS</div>') +
       '<div class="m-pl r' + (w2 ? ' win' : '') + '">' + pl(2) + '</div></div>' +
       (m.sets && m.sets.length ? '<div class="m-sets">' + esc(setsText(m.sets)) + '</div>' : '') +
       (act ? '<div class="m-actions">' + act + '</div>' : '') + '</button>';
@@ -1303,6 +1307,8 @@
       html += '<div class="section-title">トーナメント作成</div><div class="card">' +
         '<p class="small" style="margin-top:0">各リーグの上位 <b>' + s.advanceCount + '名</b> が上位トーナメント、それ以外が下位トーナメントです。' +
         'シードは「リーグ内順位 → 勝率 → セット率 → 獲得セット数」で決め、上位シードほど1回戦が不戦勝になります。1回戦で同じリーグの選手どうしが当たらないように配置します。台は <b>' + s.tableCount + '台</b> を上位・下位で共用します。</p>' +
+        '<div class="notice warn" style="margin-top:0">🏃 途中で帰る選手がいる場合は、「参加者」シートの「<b>棄権</b>」列にチェックを入れてください。トーナメントでは名前に取り消し線が付き、試合は<b>不戦敗</b>（相手の不戦勝）になります。チェックを外すと、次の試合が始まっていなければ元に戻ります。' +
+          (A.withdrawn && A.withdrawn.length ? '<br>現在の棄権: <b>' + A.withdrawn.map(function (p) { return esc(withTeam(p.name, p.team)); }).join('、') + '</b>' : '') + '</div>' +
         (A.tour ? '<div class="notice info">作成済み: 上位 ' + A.tour.upper.players + '名（' + A.tour.upper.done + '/' + A.tour.upper.total + '試合）・下位 ' + A.tour.lower.players + '名（' + A.tour.lower.done + '/' + A.tour.lower.total + '試合）</div>' : '') +
         '<div class="league-status">' + A.leagues.map(function (l) {
           var ok = l.total > 0 && l.done === l.total;
@@ -1419,7 +1425,7 @@
     if (!x || x.skipped) return '<p><b>' + title + '</b>: 2名未満のため作成しませんでした</p>';
     return '<p style="margin:10px 0 4px"><b>' + title + '</b>（' + x.count + '名' + (x.byes ? '・不戦勝 ' + x.byes : '') + '）</p><ol class="list-plain seed-list">' +
       x.seeds.map(function (e) {
-        return '<li>' + esc(withTeam(e.name, e.team)) + ' <span class="small muted">リーグ' + e.league + '・' + e.rank + '位・' + e.wins + '勝' + e.losses + '敗・セット' + e.setsWon + '-' + e.setsLost + '</span></li>';
+        return '<li>' + (e.withdrawn ? '<span class="wd">' + esc(withTeam(e.name, e.team)) + '</span> ' + '<span class="badge wdb">棄権</span>' : esc(withTeam(e.name, e.team))) + ' <span class="small muted">リーグ' + e.league + '・' + e.rank + '位・' + e.wins + '勝' + e.losses + '敗・セット' + e.setsWon + '-' + e.setsLost + '</span></li>';
       }).join('') + '</ol>';
   }
 

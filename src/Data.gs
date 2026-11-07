@@ -60,7 +60,7 @@ function buildSnapshot_(opt) {
     L.standings = computeStandings_(L.players, L.matches, settings.advanceCount);
     bootLeagues.push({ no: no, count: L.players.length, total: L.total, done: L.done, inProgress: L.inProgress, complete: L.complete });
     L.players.forEach(function (p) {
-      bootPlayers.push({ num: p.num, name: p.name, team: p.team, league: no });
+      bootPlayers.push({ num: p.num, name: p.name, team: p.team, league: no, withdrawn: !!(byNum[p.num] && byNum[p.num].withdrawn) });
     });
   });
   bootPlayers.sort(function (a, b) { return a.num - b.num; });
@@ -136,6 +136,14 @@ function buildFreshSnapshot_() {
       if (res.snap) return res.snap;
     } catch (err) {
       console.warn('auto assign failed: ' + err);
+    }
+  }
+  // 棄権のチェックがトーナメントに反映されていなければ反映する（編集トリガーが動かなかった場合の保険）
+  if (tmatches.length && applyWithdrawals_(JSON.parse(JSON.stringify(tmatches)), withdrawnSet_(players))) {
+    try {
+      if (syncWithdrawals_()) return buildSnapshot_({ settings: settings, players: players, leagueRows: leagueRows });
+    } catch (err) {
+      console.warn('sync withdrawals failed: ' + err);
     }
   }
   return buildSnapshot_({ settings: settings, players: players, leagueRows: leagueRows, tmatches: tmatches });

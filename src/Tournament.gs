@@ -7,6 +7,7 @@
  * - 台の数を設定し、対戦相手が決まった試合に空いている台を自動で割り当てる（上位・下位を交互に）
  * - 結果を保存すると勝者が次の試合へ進み、空いた台に次の試合が入る
  * - 3位決定戦（準決勝の敗者どうし）。決勝と同じ回戦の pos=1 として持つ
+ * - 棄権（参加者シートの「棄権」にチェック）した選手の試合は不戦敗にして、相手を勝ち上がらせる
  */
 
 const TSTATUS = {
@@ -24,13 +25,13 @@ const TCOL = {
   P1: 4, N1: 5, S1: 6, P2: 7, N2: 8, S2: 9,
   STATUS: 10, BEST_OF: 11, C1: 12, C2: 13, WINNER: 14,
   SET0: 15, // 15..21
-  TABLE: 22, UPDATED: 23, VER: 24, SEQ: 25,
+  TABLE: 22, UPDATED: 23, VER: 24, SEQ: 25, WO: 26,
 };
 const TOUR_HEADERS = [
   '試合ID', '種別', '回戦', '位置', '選手1番号', '選手1名前', '選手1シード', '選手2番号', '選手2名前', '選手2シード',
   '状態', 'セット数', '選手1獲得セット', '選手2獲得セット', '勝者番号',
   '第1セット', '第2セット', '第3セット', '第4セット', '第5セット', '第6セット', '第7セット',
-  '台', '更新日時', '版', '呼出順',
+  '台', '更新日時', '版', '呼出順', '不戦敗（棄権）',
 ];
 
 /* ------------------------------------------------------------------ */
@@ -233,6 +234,71 @@ function roundsOf_(ms, type) {
 }
 
 /**
+ * 棄権した選手の試合を不戦敗にする（勝ち上がった先でも続けて適用）。
+ * 棄権が取り消された場合は、次の試合がまだ始まっていなければ元に戻す。
+ * W: { くじ番号: true }。戻り値: 変更があったか
+ */
+function applyWithdrawals_(ms, W) {
+  let changed = false;
+  // 取り消し
+  ms.forEach(function (m) {
+    if (!m.wo || W[m.wo] || m.status !== TSTATUS.DONE) return;
+    const R = roundsOf_(ms, m.type);
+    const affected = [nextMatchOf_(ms, m)];
+    if (m.round === R - 1) affected.push(thirdOf_(ms, m.type));
+    const started = affected.some(function (x) { return x && (x.status === TSTATUS.PROGRESS || x.status === TSTATUS.DONE); });
+    if (started) return;
+    retractWinner_(ms, m);
+    retractLoser_(ms, m);
+    m.status = TSTATUS.NONE; m.winner = null; m.wo = ''; m.c1 = 0; m.c2 = 0; m.sets = [];
+    m.ver = (m.ver || 0) + 1; m.updatedAt = new Date();
+    changed = true;
+  });
+  // 不戦敗にする（回戦の早い順。勝ち上がった先で再び当たる場合もあるので繰り返す）
+  for (let guard = 0; guard < 20; guard++) {
+    let again = false;
+    ms.slice().sort(function (a, b) { return a.round - b.round || a.pos - b.pos; }).forEach(function (m) {
+      if (m.status !== TSTATUS.NONE && m.status !== TSTATUS.PROGRESS) return;
+      if (!m.p1 || !m.p2) return;
+      const w1 = !!W[m.p1], w2 = !!W[m.p2];
+      if (!w1 && !w2) return;
+      // 両方棄権なら上位シード側を勝ち上がり扱い（次の試合でも不戦敗になる）
+      const loser1 = w1 && w2 ? (Number(m.s1) || 999) > (Number(m.s2) || 999) : w1;
+      m.wo = loser1 ? m.p1 : m.p2;
+      m.winner = loser1 ? m.p2 : m.p1;
+      m.status = TSTATUS.DONE; m.c1 = 0; m.c2 = 0; m.sets = []; m.table = '';
+      m.ver = (m.ver || 0) + 1; m.updatedAt = new Date();
+      advanceWinner_(ms, m);
+      advanceLoser_(ms, m);
+      changed = again = true;
+    });
+    if (!again) break;
+  }
+  return changed;
+}
+
+/** シートの棄権チェックをトーナメントに反映する（変更があれば保存） */
+function syncWithdrawals_() {
+  if (!tourExists_()) return false;
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(15000)) return false;
+  try {
+    const settings = getSettings_();
+    const players = readPlayers_();
+    const ms = readTMatches_();
+    if (!applyWithdrawals_(ms, withdrawnSet_(players))) return false;
+    assignTables_(ms, settings.tableCount);
+    writeTMatches_(ms);
+    const snap = buildSnapshot_({ settings: settings, players: players, tmatches: ms });
+    putSnapshotCache_(snap);
+    SpreadsheetApp.flush();
+    return true;
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/**
  * 呼出順を付けるときの順番（決勝から遠い試合を先に。同じなら上位・下位を交互に）。
  * 一度付いた呼出順は変わらない（先に対戦相手が決まった試合から台に入る）。
  */
@@ -337,6 +403,7 @@ function tRowToMatch_(r) {
     updated: updated instanceof Date ? Utilities.formatDate(updated, 'Asia/Tokyo', 'M/d HH:mm') : String(updated || ''),
     ver: Number(r[TCOL.VER]) || 0,
     seq: toNum_(r[TCOL.SEQ]) || '',
+    wo: toNum_(r[TCOL.WO]) || '',
   };
 }
 
@@ -355,6 +422,7 @@ function tMatchToRow_(m) {
   row[TCOL.UPDATED] = m.updatedAt || m.updated || '';
   row[TCOL.VER] = m.ver || 0;
   row[TCOL.SEQ] = m.seq || '';
+  row[TCOL.WO] = m.wo || '';
   return row;
 }
 
@@ -380,13 +448,14 @@ function tourExists_() {
 function buildTourData_(ms, settings, byNum) {
   if (!ms.length) return { exists: false };
   const T = settings.tableCount;
-  const out = { exists: true, tables: T, upper: null, lower: null, board: [], queue: [] };
+  const out = { exists: true, tables: T, upper: null, lower: null, board: [], queue: [], withdrawn: [] };
+  Object.keys(byNum).forEach(function (k) { if (byNum[k].withdrawn) out.withdrawn.push(Number(k)); });
   const fill = function (m, side) {
     const num = side === 1 ? m.p1 : m.p2;
     if (!num) return;
     const p = byNum[num];
     if (p) {
-      if (side === 1) { m.n1 = p.name; m.team1 = p.team || ''; } else { m.n2 = p.name; m.team2 = p.team || ''; }
+      if (side === 1) { m.n1 = p.name; m.team1 = p.team || ''; m.w1 = !!p.withdrawn; } else { m.n2 = p.name; m.team2 = p.team || ''; m.w2 = !!p.withdrawn; }
     }
   };
   [TTYPE.UPPER, TTYPE.LOWER].forEach(function (type) {
@@ -485,6 +554,14 @@ function planBrackets_(settings) {
     };
   });
   if (!ms.length) throw new Error('トーナメントを作れる人数がいません（各トーナメント2名以上必要です）。');
+  const W = withdrawnSet_();
+  applyWithdrawals_(ms, W);
+  Object.keys(summary).forEach(function (k) { (summary[k].seeds || []).forEach(function (e) { e.withdrawn = !!W[e.num]; }); });
+  if (Object.keys(W).length) {
+    const names = [];
+    Object.keys(summary).forEach(function (k) { (summary[k].seeds || []).forEach(function (e) { if (e.withdrawn) names.push(e.name); }); });
+    if (names.length) reasons.push('棄権の選手: ' + names.join('、') + '。トーナメントには入りますが、試合は不戦敗になります。');
+  }
   assignTables_(ms, settings.tableCount);
 
   const byNum = {};
@@ -505,7 +582,8 @@ function planBrackets_(settings) {
 function tourSignature_(settings) {
   const lm = valuesToMatches_(readMatchValues_()).map(function (m) { return m.id + ':' + m.ver + ':' + m.status; }).join(',');
   const tm = readTMatches_().map(function (m) { return m.id + ':' + m.ver; }).join(',');
-  return [settings.advanceCount, settings.upperSets, settings.lowerSets, settings.tableCount, settings.thirdPlace].join('|') + '#' + lm + '#' + tm;
+  const w = Object.keys(withdrawnSet_()).sort().join(',');
+  return [settings.advanceCount, settings.upperSets, settings.lowerSets, settings.tableCount, settings.thirdPlace].join('|') + '#' + lm + '#' + tm + '#' + w;
 }
 
 const CACHE_KEY_PLAN = 'tourplan_v1';
@@ -558,6 +636,7 @@ function reassignTables_(settings) {
   const ms = readTMatches_();
   if (!ms.length) return;
   syncThirdPlace_(ms, settings.thirdPlace); // 3位決定戦の有無を変えた場合（作成済みのトーナメントにも追加できる）
+  applyWithdrawals_(ms, withdrawnSet_());
   assignTables_(ms, settings.tableCount);
   writeTMatches_(ms);
 }
@@ -581,6 +660,7 @@ function apiSaveTMatch(tid, p) {
     if (!m) throw new Error('試合が見つかりません。トーナメントが作り直された可能性があります。画面を更新してください。');
     if (!p.force && Number(p.ver) !== m.ver) return JSON.stringify({ conflict: true, current: m });
     if (!m.p1 || !m.p2 || m.status === TSTATUS.BYE) throw new Error('この試合はまだ対戦相手が決まっていません。');
+    if (m.wo) throw new Error('この試合は棄権による不戦勝です。取り消す場合は「参加者」シートの「棄権」のチェックを外してください。');
 
     let status = TSTATUS.NONE, winner = null, sets = [], c1 = 0, c2 = 0;
     if (!p.reset) {
@@ -614,6 +694,7 @@ function apiSaveTMatch(tid, p) {
       advanceWinner_(ms, m);
       advanceLoser_(ms, m);
     }
+    applyWithdrawals_(ms, withdrawnSet_()); // 勝ち上がった先の相手が棄権していれば不戦勝
     assignTables_(ms, settings.tableCount); // 空いた台に次の試合を入れる
     writeTMatches_(ms);
 
