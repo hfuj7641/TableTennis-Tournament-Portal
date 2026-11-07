@@ -186,7 +186,7 @@ function createLeagues_(settings, force) {
       pairs.forEach(function (pr, i) {
         matchValues.push(newMatchRow_(no, i + 1, byNum[pr[0]], byNum[pr[1]], settings.leagueSets));
       });
-      summary.push({ league: no, count: g.length, matches: pairs.length, players: g.map(function (p) { return p.num + ' ' + p.name; }) });
+      summary.push({ league: no, count: g.length, matches: pairs.length, players: g.map(function (p) { return p.num + ' ' + p.name + (p.team ? '（' + p.team + '）' : ''); }) });
     });
 
     // リーグシート
@@ -279,7 +279,7 @@ function addPlayerToLeague_(num, leagueNo) {
     if (!p) throw new Error('くじ番号 ' + num + ' の参加・支払済み選手が見つかりません。');
     const added = addPlayerCore_(p, leagueNo, settings);
     refreshAfterLeagueChange_(settings);
-    return { ok: true, name: p.name, league: leagueNo, added: added };
+    return { ok: true, name: p.name, team: p.team, league: leagueNo, added: added };
   } finally {
     lock.releaseLock();
   }
@@ -335,7 +335,7 @@ function autoAssignLatePlayers_() {
       const choices = nos.filter(function (n) { return counts[n] === min; });
       const leagueNo = choices[Math.floor(Math.random() * choices.length)];
       const n = addPlayerCore_(p, leagueNo, settings);
-      added.push({ name: p.name, num: p.num, league: leagueNo, matches: n, row: p.row });
+      added.push({ name: p.name, team: p.team, num: p.num, league: leagueNo, matches: n, row: p.row });
       leagueRows = readLeagueRows_();
     });
 

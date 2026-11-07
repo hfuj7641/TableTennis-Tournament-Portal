@@ -282,7 +282,7 @@ function assignMissingNumbersCore_() {
   const picks = shuffle_(free);
   return targets.map(function (p, i) {
     sh.getRange(p.row, c.num + 1).setValue(picks[i]);
-    return { name: p.name, num: picks[i] };
+    return { name: p.name, team: p.team, num: picks[i] };
   });
 }
 

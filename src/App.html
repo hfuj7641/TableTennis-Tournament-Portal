@@ -71,6 +71,34 @@
     try { if (v === undefined) return sessionStorage.getItem(k); sessionStorage.setItem(k, v); } catch (e) { return null; }
   }
 
+  /** 「名前（所属）」の形にする */
+  function withTeam(name, team) {
+    name = String(name == null ? '' : name);
+    team = String(team == null ? '' : team).trim();
+    return team ? name + '（' + team + '）' : name;
+  }
+
+  /** サーバーから受け取ったリーグのデータの名前を「名前（所属）」にする */
+  function decorate(L) {
+    if (!L || L._decorated) return L;
+    var team = {};
+    L.players.forEach(function (p) { team[p.num] = p.team || ''; p.label = withTeam(p.name, p.team); });
+    L.matches.forEach(function (m) {
+      m.r1 = m.n1; m.t1 = team[m.p1] || ''; m.r2 = m.n2; m.t2 = team[m.p2] || '';
+      m.n1 = withTeam(m.r1, m.t1); m.n2 = withTeam(m.r2, m.t2);
+    });
+    (L.standings || []).forEach(function (s) { s.label = withTeam(s.name, s.team); });
+    L._decorated = true;
+    return L;
+  }
+
+  /** 試合の選手名を HTML で（名前と（所属）がそれぞれ途中で改行されないように） */
+  function nameHtml(m, side) {
+    var n = side === 1 ? m.r1 : m.r2, t = side === 1 ? m.t1 : m.t2;
+    if (n === undefined) return esc(side === 1 ? m.n1 : m.n2);
+    return '<span class="nb">' + esc(n) + '</span>' + (t ? '<span class="nb team">（' + esc(t) + '）</span>' : '');
+  }
+
   function need(bestOf) { return Math.floor(bestOf / 2) + 1; }
 
   function validGame(x, y) {
@@ -211,9 +239,9 @@
   function loadLeague(no, silent) {
     if (!silent) busy(true);
     return call('apiGetLeague', S.tid, no).then(function (L) {
-      S.leagues[no] = L;
+      S.leagues[no] = decorate(L);
       busy(false);
-      return L;
+      return S.leagues[no];
     }).catch(function (e) {
       busy(false);
       throw e;
@@ -335,7 +363,7 @@
     if (!list.length) return '<div class="empty">該当する選手がいません</div>';
     return list.map(function (p) {
       return '<button class="name-item" data-act="open-player" data-league="' + p.league + '" data-num="' + p.num + '">' +
-        '<span class="num">' + p.num + '</span><span class="nm">' + esc(p.name) + (p.team ? '<small>' + esc(p.team) + '</small>' : '') + '</span>' +
+        '<span class="num">' + p.num + '</span><span class="nm">' + esc(withTeam(p.name, p.team)) + '</span>' +
         '<span class="lg">リーグ' + p.league + ' ›</span></button>';
     }).join('');
   }
@@ -343,7 +371,7 @@
   /* ----- league (match list) ----- */
 
   function playerName(L, num) {
-    for (var i = 0; i < L.players.length; i++) if (L.players[i].num === num) return L.players[i].name;
+    for (var i = 0; i < L.players.length; i++) if (L.players[i].num === num) return L.players[i].label || L.players[i].name;
     return '#' + num;
   }
 
@@ -362,9 +390,9 @@
     return '<button class="match st-' + st + (mine ? ' mine' : '') + '" data-act="match" data-id="' + esc(m.id) + '">' +
       '<div class="m-head"><span>第' + m.no + '試合</span><span class="sp"></span><span class="badge ' + st + '">' + esc(m.status) + '</span></div>' +
       '<div class="m-body">' +
-      '<div class="m-pl' + (w1 ? ' win' : '') + '"><span class="num">' + m.p1 + '</span>' + esc(m.n1) + '</div>' +
+      '<div class="m-pl' + (w1 ? ' win' : '') + '"><span class="num">' + m.p1 + '</span>' + nameHtml(m, 1) + '</div>' +
       (hasScore ? '<div class="m-score">' + m.c1 + ' - ' + m.c2 + '</div>' : '<div class="m-score vs">VS</div>') +
-      '<div class="m-pl r' + (w2 ? ' win' : '') + '">' + esc(m.n2) + '<span class="num">' + m.p2 + '</span></div>' +
+      '<div class="m-pl r' + (w2 ? ' win' : '') + '">' + nameHtml(m, 2) + '<span class="num">' + m.p2 + '</span></div>' +
       '</div>' +
       (m.sets && m.sets.length ? '<div class="m-sets">' + esc(setsText(m.sets)) + '</div>' : '') +
       (actions ? '<div class="m-actions">' + actions + '</div>' : '') +
@@ -380,7 +408,7 @@
       '<button class="icon-btn" data-act="refresh" title="更新">🔄</button></div>';
     html += '<p class="small muted" style="margin:6px 0 0">' + L.bestOf + 'セットマッチ（' + L.need + 'セット先取）・試合の順番は自由です</p>';
     html += '<div class="players-row">' + L.players.map(function (p) {
-      return '<button class="pchip' + (focus === p.num ? ' on' : '') + '" data-act="focus" data-num="' + p.num + '"><span class="num">' + p.num + '</span>' + esc(p.name) + '</button>';
+      return '<button class="pchip' + (focus === p.num ? ' on' : '') + '" data-act="focus" data-num="' + p.num + '"><span class="num">' + p.num + '</span>' + esc(p.label || p.name) + '</button>';
     }).join('') + '</div>';
     if (focus) {
       html += '<div class="focus-banner"><span>' + esc(playerName(L, focus)) + ' さんの試合' + (only ? 'のみ表示中' : 'を強調表示中') + '</span>' +
@@ -419,7 +447,7 @@
       var adv = s.advance === 'upper';
       html += '<tr class="' + (adv ? 'adv' : '') + '">' +
         '<td class="rank rank-' + s.rank + '">' + s.rank + (s.tied ? '<span class="small muted">=</span>' : '') + '</td>' +
-        '<td class="name"><span class="num" style="margin-right:6px">' + s.num + '</span>' + esc(s.name) + '</td>' +
+        '<td class="name"><span class="num" style="margin-right:6px">' + s.num + '</span>' + esc(s.label || s.name) + '</td>' +
         '<td>' + s.wins + '勝' + s.losses + '敗</td>' +
         '<td>' + fmtRate(s) + '</td>' +
         '<td>' + s.setsWon + '-' + s.setsLost + '</td>' +
@@ -435,7 +463,7 @@
     L.players.forEach(function (p) { html += '<th><span class="num">' + p.num + '</span></th>'; });
     html += '</tr></thead><tbody>';
     L.players.forEach(function (row) {
-      html += '<tr><td class="name"><span class="num" style="margin-right:6px">' + row.num + '</span>' + esc(row.name) + '</td>';
+      html += '<tr><td class="name"><span class="num" style="margin-right:6px">' + row.num + '</span>' + esc(row.label || row.name) + '</td>';
       L.players.forEach(function (col) {
         if (row.num === col.num) { html += '<td class="cell self"></td>'; return; }
         var m = null;
@@ -470,9 +498,9 @@
     var w1 = m.status === STATUS.DONE && m.winner === m.p1;
     var w2 = m.status === STATUS.DONE && m.winner === m.p2;
     var html = '<div class="small muted" style="text-align:center">リーグ' + L.no + ' ・ ' + m.bestOf + 'セットマッチ ・ <span class="badge ' + statusClass(m.status) + '">' + esc(m.status) + '</span></div>' +
-      '<div class="detail-score"><div class="pn">' + (w1 ? '🏆 ' : '') + '<span class="num">' + m.p1 + '</span><br>' + esc(m.n1) + '</div>' +
+      '<div class="detail-score"><div class="pn">' + (w1 ? '🏆 ' : '') + '<span class="num">' + m.p1 + '</span><br>' + nameHtml(m, 1) + '</div>' +
       '<div class="sc">' + (m.status === STATUS.NONE ? '<span class="muted" style="font-size:18px">VS</span>' : m.c1 + ' - ' + m.c2) + '</div>' +
-      '<div class="pn">' + (w2 ? '🏆 ' : '') + '<span class="num">' + m.p2 + '</span><br>' + esc(m.n2) + '</div></div>';
+      '<div class="pn">' + (w2 ? '🏆 ' : '') + '<span class="num">' + m.p2 + '</span><br>' + nameHtml(m, 2) + '</div></div>';
     if (m.sets && m.sets.length) {
       html += '<div class="table-wrap" style="box-shadow:none;border:1px solid var(--line)"><table class="detail-sets"><thead><tr><th>セット</th><th>' + esc(m.n1) + '</th><th>' + esc(m.n2) + '</th></tr></thead><tbody>' +
         m.sets.map(function (s, i) {
@@ -516,12 +544,12 @@
     var n = need(m.bestOf);
     var html = topbar('第' + m.no + '試合　結果入力', 'league', { league: L.no, focus: S.params.focus || null }) + '<div class="wrap">';
     html += '<div class="entry-head"><div class="small muted">リーグ ' + L.no + ' ・ ' + m.bestOf + 'セットマッチ（' + n + 'セット先取）</div>' +
-      '<div class="vs"><div><span class="num">' + m.p1 + '</span><br>' + esc(m.n1) + '</div><div class="x">VS</div><div><span class="num">' + m.p2 + '</span><br>' + esc(m.n2) + '</div></div></div>';
+      '<div class="vs"><div><span class="num">' + m.p1 + '</span><br>' + esc(m.n1) + '</div><div class="x">VS</div><div><span class="num">' + m.p2 + '</span><br>' + nameHtml(m, 2) + '</div></div></div>';
     if (E.wasStatus === STATUS.DONE) html += '<div class="notice warn">⚠️ 終了済みの試合の結果を修正しています。</div>';
     if (E.wasStatus === STATUS.PROGRESS) html += '<div class="notice info">途中経過が保存されています。続きを入力してください。</div>';
 
     html += '<div class="section-title">各セットの得点</div><div class="card">' +
-      '<div class="set-head"><span></span><span>' + esc(m.n1) + '</span><span></span><span>' + esc(m.n2) + '</span><span></span></div>';
+      '<div class="set-head"><span></span><span>' + nameHtml(m, 1) + '</span><span></span><span>' + nameHtml(m, 2) + '</span><span></span></div>';
     for (var i = 0; i < m.bestOf; i++) {
       html += '<div class="set-row" data-row="' + i + '"><label>第' + (i + 1) + 'セット</label>' +
         '<input type="number" inputmode="numeric" pattern="[0-9]*" min="0" max="99" data-set="' + i + '" data-side="0" value="' + esc(E.sets[i][0]) + '" aria-label="第' + (i + 1) + 'セット ' + esc(m.n1) + '">' +
@@ -621,7 +649,7 @@
       var wn = r.winner === 1 ? m.n1 : m.n2;
       return modal({
         title: '試合結果を保存します', icon: '🏆',
-        html: '<div class="detail-score"><div class="pn">' + esc(m.n1) + '</div><div class="sc">' + r.a + ' - ' + r.b + '</div><div class="pn">' + esc(m.n2) + '</div></div>' +
+        html: '<div class="detail-score"><div class="pn">' + nameHtml(m, 1) + '</div><div class="sc">' + r.a + ' - ' + r.b + '</div><div class="pn">' + nameHtml(m, 2) + '</div></div>' +
           '<p style="text-align:center"><b>' + esc(wn) + '</b> さんの勝ち</p><p class="small muted" style="text-align:center">' + esc(setsText(r.sets)) + '</p>',
         buttons: [{ label: '戻る', value: false, cls: 'ghost' }, { label: '保存する', value: true, cls: 'accent' }],
       });
@@ -662,7 +690,7 @@
           return loadLeague(L.no).then(function () { go('league', { league: L.no, focus: S.params.focus || null }, true); });
         });
       }
-      S.leagues[L.no] = res.league;
+      S.leagues[L.no] = decorate(res.league);
       S.entry = null;
       if (S.boot) loadBoot(true).catch(function () {});
       toast(payload.reset ? '結果を消しました' : '保存しました');
@@ -910,11 +938,11 @@
       html += '<div class="notice warn">⚠️ くじ番号が重複しています:<ul class="list-plain">' + A.duplicates.map(function (d) { return '<li>' + d.num + '番: ' + esc(d.names.join('、')) + '</li>'; }).join('') + '</ul></div>';
     }
     if (A.missingNumber.length) {
-      html += '<div class="notice warn">参加・支払済みでくじ番号が未記入: ' + A.missingNumber.length + '名<ul class="list-plain">' + A.missingNumber.map(function (p) { return '<li>' + esc(p.name) + '（' + p.row + '行目）</li>'; }).join('') + '</ul>' +
+      html += '<div class="notice warn">参加・支払済みでくじ番号が未記入: ' + A.missingNumber.length + '名<ul class="list-plain">' + A.missingNumber.map(function (p) { return '<li>' + esc(withTeam(p.name, p.team)) + ' … ' + p.row + '行目</li>'; }).join('') + '</ul>' +
         '<div class="row-actions"><button class="btn" data-act="adm-assign">🎲 空いている番号を自動で割り当てる</button></div></div>';
     }
     if (A.attendNotPaid.length) {
-      html += '<div class="notice info">参加確認済みで支払いが未確認: ' + A.attendNotPaid.map(function (p) { return esc(p.name); }).join('、') + '</div>';
+      html += '<div class="notice info">参加確認済みで支払いが未確認: ' + A.attendNotPaid.map(function (p) { return esc(withTeam(p.name, p.team)); }).join('、') + '</div>';
     }
     html += '<div class="row-actions"><button class="btn ghost" data-act="adm-reload">🔄 最新の状態を読み込む</button></div></div>';
 
@@ -954,7 +982,7 @@
           : '自動追加：<b>オフ</b>。下で追加先のリーグを選んで追加してください。') + '</p>';
       if (A.unassigned.length && s.autoAssignLate) html += '<button class="btn accent block" data-act="adm-late" style="margin-bottom:12px">今すぐ自動で追加する（' + A.unassigned.length + '名）</button>';
       if (A.unassigned.length) {
-        html += '<div class="grid2"><div class="form-row"><label>選手</label><select id="add-num">' + A.unassigned.map(function (p) { return '<option value="' + p.num + '">' + p.num + ' ' + esc(p.name) + '</option>'; }).join('') + '</select></div>' +
+        html += '<div class="grid2"><div class="form-row"><label>選手</label><select id="add-num">' + A.unassigned.map(function (p) { return '<option value="' + p.num + '">' + p.num + ' ' + esc(withTeam(p.name, p.team)) + '</option>'; }).join('') + '</select></div>' +
           '<div class="form-row"><label>追加先リーグ</label><select id="add-league">' + A.leagues.map(function (l) { return '<option value="' + l.no + '">リーグ' + l.no + '（' + l.count + '名）</option>'; }).join('') + '</select></div></div>' +
           '<button class="btn block" data-act="adm-add">リーグに追加（試合を追加作成）</button>';
       } else html += '<p class="muted small" style="margin:0">リーグに入っていない対象選手はいません。</p>';
@@ -1023,7 +1051,7 @@
     S.leagues = {};
     loadBoot(true).catch(function () {});
     alertBox('遅れて来た選手をリーグに追加しました', '<ul>' + list.map(function (a) {
-      return '<li><b>' + esc(a.name) + '</b>（' + a.num + '番）→ リーグ' + a.league + '（' + a.matches + '試合を追加）</li>';
+      return '<li><b>' + esc(withTeam(a.name, a.team)) + '</b> … ' + a.num + '番 → リーグ' + a.league + '（' + a.matches + '試合を追加）</li>';
     }).join('') + '</ul>', '✅');
   }
 
@@ -1186,7 +1214,7 @@
         break;
       case 'adm-assign':
         adminCall('adminAutoAssign').then(function (r) {
-          return alertBox('くじ番号を割り当てました', r.assigned.length ? '<ul>' + r.assigned.map(function (a) { return '<li>' + a.num + '番: ' + esc(a.name) + '</li>'; }).join('') + '</ul><p class="small muted">「参加者」シートに書き込みました。</p>' : '<p>割り当てが必要な選手はいませんでした。</p>', '🎲');
+          return alertBox('くじ番号を割り当てました', r.assigned.length ? '<ul>' + r.assigned.map(function (a) { return '<li>' + a.num + '番: ' + esc(withTeam(a.name, a.team)) + '</li>'; }).join('') + '</ul><p class="small muted">「参加者」シートに書き込みました。</p>' : '<p>割り当てが必要な選手はいませんでした。</p>', '🎲');
         }).then(adminReload).catch(function () {});
         break;
       case 'adm-save': {
@@ -1215,7 +1243,7 @@
         adminCall('adminAddPlayer', n, lg).then(function (r) {
           S.leagues = {};
           loadBoot(true).catch(function () {});
-          toast(r.name + ' さんをリーグ' + r.league + 'に追加しました（' + r.added + '試合）');
+          toast(withTeam(r.name, r.team) + ' さんをリーグ' + r.league + 'に追加しました（' + r.added + '試合）');
           return adminReload();
         }).catch(function () {});
         break;
