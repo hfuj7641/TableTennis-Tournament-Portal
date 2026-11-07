@@ -10,6 +10,7 @@ const SETTING_DEFS = [
   { key: 'upperSets', label: '上位トーナメントのセット数', def: 5, type: 'sets', desc: '5 = 5セットマッチ（3セット先取）' },
   { key: 'lowerSets', label: '下位トーナメントのセット数', def: 3, type: 'sets', desc: '3 = 3セットマッチ（2セット先取）' },
   { key: 'tableCount', label: '台の数', def: 4, type: 'int', desc: 'トーナメントで使う卓球台の数。空いた台に次の試合を自動で割り当てます' },
+  { key: 'thirdPlace', label: '3位決定戦を行う', def: true, type: 'bool', desc: 'TRUE なら上位・下位トーナメントそれぞれで準決勝の敗者どうしの3位決定戦を行います' },
   { key: 'advanceCount', label: '上位トーナメント進出人数（各リーグ）', def: 2, type: 'int', desc: '各リーグの上位何名が上位トーナメントに進むか' },
   { key: 'autoAssignLate', label: '遅れて来た選手をリーグに自動追加', def: true, type: 'bool', desc: 'TRUE なら、リーグ作成後に参加・支払確認が付いた選手を人数の少ないリーグへ自動で追加します（くじ番号が空欄なら自動で付けます）' },
   { key: 'adminPassword', label: '管理者パスワード', def: 'admin', type: 'string', desc: 'Web の管理者メニューに入るためのパスワード。必ず変更してください' },

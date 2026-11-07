@@ -820,10 +820,29 @@
     loadTour(true).then(function () { render(); }).catch(showError);
   }
 
+  /** 選手番号 → 「名前（所属）」（トーナメント内から探す） */
+  function tName(b, num) {
+    if (!b || !num) return '';
+    for (var i = 0; i < b.matches.length; i++) {
+      var m = b.matches[i];
+      if (m.p1 === num) return m.n1;
+      if (m.p2 === num) return m.n2;
+    }
+    return '#' + num;
+  }
+
   function champName(b) {
-    if (!b || !b.champion) return '';
-    var fin = b.matches[b.matches.length - 1];
-    return fin.winner === fin.p1 ? fin.n1 : fin.n2;
+    return b && b.champion ? tName(b, b.champion) : '';
+  }
+
+  /** 優勝・準優勝・3位 */
+  function podiumHtml(b) {
+    if (!b.champion && !b.thirdPlace) return '';
+    var rows = [];
+    if (b.champion) rows.push('🥇 優勝: <b>' + esc(tName(b, b.champion)) + '</b>');
+    if (b.runnerUp) rows.push('🥈 準優勝: <b>' + esc(tName(b, b.runnerUp)) + '</b>');
+    if (b.thirdPlace) rows.push('🥉 3位: <b>' + esc(tName(b, b.thirdPlace)) + '</b>');
+    return '<div class="champ-banner">' + esc(b.type) + 'トーナメント<br>' + rows.join('<br>') + '</div>';
   }
 
   /** 台の状況と次の試合 */
@@ -867,9 +886,13 @@
     for (var r = 1; r <= R; r++) {
       boxes += '<div class="rlabel" style="left:' + xOf(r) + 'px;width:' + W + 'px">' + esc(b.roundNames[r - 1]) + '</div>';
     }
+    var thirdY = yOf(R, 0) + H + 64;
+    if (b.hasThird) height = Math.max(height, thirdY + 60);
     b.matches.forEach(function (m) {
-      var x = xOf(m.round), y = yOf(m.round, m.pos);
-      if (m.round < R) {
+      var x = xOf(m.round), y = m.third ? thirdY : yOf(m.round, m.pos);
+      if (m.third) {
+        boxes += '<div class="rlabel third" style="left:' + x + 'px;top:' + (y - H / 2 - 26) + 'px;width:' + W + 'px">3位決定戦</div>';
+      } else if (m.round < R) {
         var y2 = yOf(m.round + 1, Math.floor(m.pos / 2));
         var xm = x + W + G / 2;
         lines += '<path d="M' + (x + W) + ' ' + y + ' H' + xm + ' V' + y2 + ' H' + (x + W + G) + '" class="' + (m.status === STATUS.DONE || m.status === '不戦勝' ? 'done' : '') + '"/>';
@@ -894,6 +917,11 @@
     var lastX = xOf(R) + W + G;
     boxes += '<div class="champ" style="left:' + lastX + 'px;top:' + (yOf(R, 0) - 24) + 'px">' +
       (ch ? '<div class="small">🏆 優勝</div><b>' + esc(ch) + '</b>' : '<div class="small muted">🏆 優勝</div><span class="muted">未定</span>') + '</div>';
+    if (b.hasThird) {
+      var th = b.thirdPlace ? tName(b, b.thirdPlace) : '';
+      boxes += '<div class="champ third" style="left:' + lastX + 'px;top:' + (thirdY - 24) + 'px">' +
+        (th ? '<div class="small">🥉 3位</div><b>' + esc(th) + '</b>' : '<div class="small muted">🥉 3位</div><span class="muted">未定</span>') + '</div>';
+    }
     return '<div class="bracket-wrap" id="bracket-wrap"><div class="bracket" style="width:' + width + 'px;height:' + height + 'px">' +
       '<svg class="blines" width="' + width + '" height="' + height + '">' + lines + '</svg>' + boxes + '</div></div>';
   }
@@ -938,8 +966,7 @@
     }
     html += '<div class="summary"><span class="small"><b>' + b.done + '</b> / ' + b.total + ' 試合終了 ・ ' + b.bestOf + 'セットマッチ（' + need(b.bestOf) + 'セット先取）</span>' +
       '<span style="flex:1"></span><button class="icon-btn" data-act="refresh" title="更新">🔄</button></div>';
-    var ch = champName(b);
-    if (ch) html += '<div class="champ-banner">🏆 ' + esc(b.type) + 'トーナメント 優勝: <b>' + esc(ch) + '</b></div>';
+    html += podiumHtml(b);
 
     if (focus) {
       var mine = b.matches.filter(function (m) { return (m.p1 === focus || m.p2 === focus) && m.status !== '不戦勝'; });
@@ -1249,6 +1276,10 @@
       '<div class="form-row"><label>下位トーナメントのセット数</label><select name="lowerSets">' + opt(s.lowerSets) + '</select></div>' +
       '</div>' +
       '<div class="form-row"><label>台の数（トーナメントで使う卓球台）</label><input name="tableCount" type="number" min="1" inputmode="numeric" value="' + s.tableCount + '"><div class="hint">空いた台に次の試合を自動で割り当てます。トーナメント中に変更すると割り当てをやり直します</div></div>' +
+      '<div class="form-row"><label>3位決定戦</label><select name="thirdPlace" data-bool="1">' +
+      '<option value="1"' + (s.thirdPlace ? ' selected' : '') + '>行う（準決勝の敗者どうし）</option>' +
+      '<option value="0"' + (!s.thirdPlace ? ' selected' : '') + '>行わない</option></select>' +
+      '<div class="hint">作成済みのトーナメントでも、ここを変えて保存すると3位決定戦を追加・削除できます（始まっている場合は削除しません）</div></div>' +
       '<div class="form-row"><label>上位トーナメント進出人数（各リーグ）</label><input name="advanceCount" type="number" min="1" inputmode="numeric" value="' + s.advanceCount + '"></div>' +
       '<div class="form-row"><label>遅れて来た選手をリーグに自動追加</label><select name="autoAssignLate" data-bool="1">' +
       '<option value="1"' + (s.autoAssignLate ? ' selected' : '') + '>する（人数の少ないリーグへ自動で追加）</option>' +

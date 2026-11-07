@@ -6,6 +6,7 @@
  * - シード順に標準的な位置へ配置（上位シードほど不戦勝になる）。1回戦で同じリーグの選手が当たる場合は入れ替える
  * - 台の数を設定し、対戦相手が決まった試合に空いている台を自動で割り当てる（上位・下位を交互に）
  * - 結果を保存すると勝者が次の試合へ進み、空いた台に次の試合が入る
+ * - 3位決定戦（準決勝の敗者どうし）。決勝と同じ回戦の pos=1 として持つ
  */
 
 const TSTATUS = {
@@ -54,7 +55,8 @@ function bracketSize_(n) {
   return b;
 }
 
-function roundName_(R, r) {
+function roundName_(R, r, pos) {
+  if (r === R && pos === 1 && R >= 2) return '3位決定戦';
   const left = R - r;
   if (left === 0) return '決勝';
   if (left === 1) return '準決勝';
@@ -103,20 +105,54 @@ function tMatchId_(code, round, pos) {
   return code + '-' + round + '-' + (pos + 1 < 10 ? '0' : '') + (pos + 1);
 }
 
-/** トーナメントの全試合を作る */
-function buildBracketMatches_(type, slots, bestOf) {
+function newTMatch_(type, round, pos, bestOf, id) {
   const code = type === TTYPE.UPPER ? 'U' : 'L';
+  return {
+    id: id || tMatchId_(code, round, pos), type: type, round: round, pos: pos,
+    p1: null, n1: '', s1: '', p2: null, n2: '', s2: '',
+    status: TSTATUS.WAIT, bestOf: bestOf, c1: 0, c2: 0, winner: null, sets: [], table: '', updated: '', ver: 0, seq: '',
+  };
+}
+
+/** 3位決定戦の試合（決勝と同じ回戦の pos=1） */
+function thirdOf_(ms, type) {
+  const R = roundsOf_(ms, type);
+  return R >= 2 ? findT_(ms, type, R, 1) : null;
+}
+
+function isThird_(ms, m) {
+  return m.pos === 1 && m.round === roundsOf_(ms, m.type) && m.round >= 2;
+}
+
+/**
+ * 3位決定戦を設定に合わせて追加・削除する。
+ * 準決勝の両方が実際の試合（不戦勝でない）のときだけ作る（3名の山などでは作らない）。
+ */
+function syncThirdPlace_(ms, on) {
+  [TTYPE.UPPER, TTYPE.LOWER].forEach(function (type) {
+    const R = roundsOf_(ms, type);
+    if (R < 2) return;
+    const third = findT_(ms, type, R, 1);
+    const semis = ms.filter(function (m) { return m.type === type && m.round === R - 1; });
+    const possible = semis.length === 2 && semis.every(function (m) { return m.status !== TSTATUS.BYE; });
+    if (on && !third && possible) {
+      ms.push(newTMatch_(type, R, 1, semis[0].bestOf, (type === TTYPE.UPPER ? 'U' : 'L') + '-3P'));
+      semis.forEach(function (s) { if (s.status === TSTATUS.DONE) advanceLoser_(ms, s); });
+    } else if (!on && third && third.status !== TSTATUS.PROGRESS && third.status !== TSTATUS.DONE) {
+      ms.splice(ms.indexOf(third), 1);
+    }
+  });
+}
+
+/** トーナメントの全試合を作る */
+function buildBracketMatches_(type, slots, bestOf, thirdPlace) {
   const B = slots.length;
   const R = Math.round(Math.log(B) / Math.log(2));
   const ms = [];
   for (let r = 1; r <= R; r++) {
     const count = B / Math.pow(2, r);
     for (let pos = 0; pos < count; pos++) {
-      const m = {
-        id: tMatchId_(code, r, pos), type: type, round: r, pos: pos,
-        p1: null, n1: '', s1: '', p2: null, n2: '', s2: '',
-        status: TSTATUS.WAIT, bestOf: bestOf, c1: 0, c2: 0, winner: null, sets: [], table: '', updated: '', ver: 0, seq: '',
-      };
+      const m = newTMatch_(type, r, pos, bestOf);
       if (r === 1) {
         const a = slots[pos * 2], b = slots[pos * 2 + 1];
         if (a) { m.p1 = a.num; m.n1 = a.name; m.s1 = a.seed; }
@@ -128,6 +164,7 @@ function buildBracketMatches_(type, slots, bestOf) {
     }
   }
   ms.filter(function (m) { return m.status === TSTATUS.BYE; }).forEach(function (m) { advanceWinner_(ms, m); });
+  if (thirdPlace) syncThirdPlace_(ms, true);
   return ms;
 }
 
@@ -140,7 +177,32 @@ function findT_(ms, type, round, pos) {
 }
 
 function nextMatchOf_(ms, m) {
+  if (isThird_(ms, m)) return null;
   return findT_(ms, m.type, m.round + 1, Math.floor(m.pos / 2));
+}
+
+/** 準決勝の敗者を3位決定戦に入れる */
+function advanceLoser_(ms, m) {
+  if (m.round !== roundsOf_(ms, m.type) - 1 || m.status !== TSTATUS.DONE || !m.winner) return;
+  const third = thirdOf_(ms, m.type);
+  if (!third) return;
+  const isP1 = m.winner !== m.p1; // 敗者が選手1か
+  const num = isP1 ? m.p1 : m.p2;
+  const name = isP1 ? m.n1 : m.n2;
+  const seed = isP1 ? m.s1 : m.s2;
+  if (m.pos % 2 === 0) { third.p1 = num; third.n1 = name; third.s1 = seed; }
+  else { third.p2 = num; third.n2 = name; third.s2 = seed; }
+  if (third.p1 && third.p2 && third.status === TSTATUS.WAIT) third.status = TSTATUS.NONE;
+}
+
+function retractLoser_(ms, m) {
+  if (m.round !== roundsOf_(ms, m.type) - 1) return;
+  const third = thirdOf_(ms, m.type);
+  if (!third) return;
+  if (m.pos % 2 === 0) { third.p1 = null; third.n1 = ''; third.s1 = ''; }
+  else { third.p2 = null; third.n2 = ''; third.s2 = ''; }
+  third.status = TSTATUS.WAIT;
+  third.table = '';
 }
 
 /** 勝者を次の試合に入れる */
@@ -179,7 +241,8 @@ function tablePriority_(ms) {
   R[TTYPE.UPPER] = roundsOf_(ms, TTYPE.UPPER);
   R[TTYPE.LOWER] = roundsOf_(ms, TTYPE.LOWER);
   return function (a, b) {
-    return ((R[b.type] - b.round) - (R[a.type] - a.round)) || (a.pos - b.pos) || (a.type === TTYPE.UPPER ? -1 : 1);
+    const left = function (m) { return R[m.type] - m.round + (m.round === R[m.type] && m.pos === 1 ? 0.5 : 0); }; // 3位決定戦は決勝より先
+    return (left(b) - left(a)) || (a.pos - b.pos) || (a.type === TTYPE.UPPER ? -1 : 1);
   };
 }
 
@@ -333,13 +396,22 @@ function buildTourData_(ms, settings, byNum) {
     const R = roundsOf_(list, type);
     const names = [];
     for (let r = 1; r <= R; r++) names.push(roundName_(R, r));
-    list.forEach(function (m) { m.roundName = roundName_(R, m.round); fill(m, 1); fill(m, 2); });
-    const final = list.filter(function (m) { return m.round === R; })[0];
+    list.forEach(function (m) {
+      m.roundName = roundName_(R, m.round, m.pos);
+      m.third = m.round === R && m.pos === 1 && R >= 2;
+      fill(m, 1); fill(m, 2);
+    });
+    const final = findT_(list, type, R, 0);
+    const third = findT_(list, type, R, 1);
+    const loserOf = function (m) { return m && m.status === TSTATUS.DONE ? (m.winner === m.p1 ? m.p2 : m.p1) : null; };
     const real = list.filter(function (m) { return m.status !== TSTATUS.BYE; });
     out[type === TTYPE.UPPER ? 'upper' : 'lower'] = {
       type: type, size: Math.pow(2, R), rounds: R, roundNames: names, bestOf: list[0].bestOf,
       matches: list,
       champion: final && final.status === TSTATUS.DONE ? final.winner : null,
+      runnerUp: loserOf(final),
+      thirdPlace: third && third.status === TSTATUS.DONE ? third.winner : null,
+      hasThird: !!third,
       total: real.length,
       done: real.filter(function (m) { return m.status === TSTATUS.DONE; }).length,
       players: list.filter(function (m) { return m.round === 1; }).reduce(function (n, m) { return n + (m.p1 ? 1 : 0) + (m.p2 ? 1 : 0); }, 0),
@@ -408,7 +480,7 @@ function createBrackets_(settings, force) {
       }
       const seeded = seedPlayers_(entries);
       const B = bracketSize_(seeded.length);
-      ms = ms.concat(buildBracketMatches_(type, placeSlots_(seeded, B), bestOf));
+      ms = ms.concat(buildBracketMatches_(type, placeSlots_(seeded, B), bestOf, settings.thirdPlace));
       summary[key] = {
         count: seeded.length, size: B, byes: B - seeded.length,
         seeds: seeded.map(function (e) {
@@ -433,6 +505,7 @@ function createBrackets_(settings, force) {
 function reassignTables_(settings) {
   const ms = readTMatches_();
   if (!ms.length) return;
+  syncThirdPlace_(ms, settings.thirdPlace); // 3位決定戦の有無を変えた場合（作成済みのトーナメントにも追加できる）
   assignTables_(ms, settings.tableCount);
   writeTMatches_(ms);
 }
@@ -470,17 +543,25 @@ function apiSaveTMatch(tid, p) {
 
     // 勝者が変わる（または取り消す）場合、次の試合がまだ始まっていなければ差し替える
     if (m.status === TSTATUS.DONE && m.winner !== winner) {
-      const next = nextMatchOf_(ms, m);
-      if (next && (next.status === TSTATUS.PROGRESS || next.status === TSTATUS.DONE)) {
-        throw new Error('次の試合（' + next.id + '）が既に始まっているため、勝者を変更できません。先に次の試合の結果を消してください。');
-      }
+      const R = roundsOf_(ms, m.type);
+      const affected = [nextMatchOf_(ms, m)];
+      if (m.round === R - 1) affected.push(thirdOf_(ms, m.type)); // 準決勝なら3位決定戦も
+      affected.forEach(function (x) {
+        if (x && (x.status === TSTATUS.PROGRESS || x.status === TSTATUS.DONE)) {
+          throw new Error('次の試合（' + roundName_(R, x.round, x.pos) + '）が既に始まっているため、勝敗を変更できません。先にその試合の結果を消してください。');
+        }
+      });
       retractWinner_(ms, m);
+      retractLoser_(ms, m);
     }
 
     m.status = status; m.winner = winner; m.sets = sets; m.c1 = c1; m.c2 = c2;
     m.ver = m.ver + 1;
     m.updatedAt = new Date();
-    if (status === TSTATUS.DONE) advanceWinner_(ms, m);
+    if (status === TSTATUS.DONE) {
+      advanceWinner_(ms, m);
+      advanceLoser_(ms, m);
+    }
     assignTables_(ms, settings.tableCount); // 空いた台に次の試合を入れる
     writeTMatches_(ms);
 
