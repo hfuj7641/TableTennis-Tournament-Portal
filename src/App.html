@@ -570,6 +570,7 @@
     if (m.wo) return '不戦勝（棄権）';
     if (m.status === '待機') return '対戦相手待ち';
     if (m.status === STATUS.DONE) return m.table ? '台' + m.table + 'で実施' : '';
+    if (m.isFinal) return m.status === STATUS.PROGRESS ? '決勝 試合中' : '決勝（個別に案内）';
     if (m.table) return m.status === STATUS.PROGRESS ? '台' + m.table + 'で試合中' : '台' + m.table + 'で試合';
     return '台の空き待ち';
   }
@@ -853,7 +854,17 @@
 
   /** 台の状況と次の試合 */
   function boardHtml(T) {
-    var html = '<div class="section-title">台の状況（上位・下位 同時進行）</div><div class="board">';
+    var html = '';
+    if (T.finals && T.finals.length) {
+      html += '<div class="section-title">決勝（台と開始時間は大会スタッフが個別に案内します）</div><div class="queue">' +
+        T.finals.map(function (id) {
+          var m = T.byId[id];
+          return '<button class="qitem final-item" data-act="tmatch" data-id="' + esc(id) + '"><span class="qno">🏆</span>' +
+            '<span class="badge ' + (m.type === '上位' ? 'upper' : 'lower') + '">' + m.type + '</span><span class="small muted">決勝' + (m.status === STATUS.PROGRESS ? ' ・ 試合中 ' + m.c1 + '-' + m.c2 : ' ・ 案内待ち') + '</span>' +
+            '<span class="qnames">' + esc(m.n1) + ' <span class="muted">vs</span> ' + esc(m.n2) + '</span></button>';
+        }).join('') + '</div>';
+    }
+    html += '<div class="section-title">台の状況（上位・下位 同時進行）</div><div class="board">';
     T.board.forEach(function (b) {
       var m = b.id && T.byId[b.id];
       if (!m) {

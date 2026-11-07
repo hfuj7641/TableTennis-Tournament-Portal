@@ -7,6 +7,7 @@
  * - 台の数を設定し、対戦相手が決まった試合に空いている台を自動で割り当てる（上位・下位を交互に）
  * - 結果を保存すると勝者が次の試合へ進み、空いた台に次の試合が入る
  * - 3位決定戦（準決勝の敗者どうし）。決勝と同じ回戦の pos=1 として持つ
+ * - 決勝は台を割り当てない（大会スタッフが個別に案内する）
  * - 棄権（参加者シートの「棄権」にチェック）した選手の試合は不戦敗にして、相手を勝ち上がらせる
  */
 
@@ -316,10 +317,15 @@ function tablePriority_(ms) {
  * 空いている台に、対戦相手が決まっている試合を割り当てる。
  * 戻り値: 新たに台が決まった試合
  */
+/** 決勝（決勝の回戦の pos=0）か */
+function isFinal_(ms, m) {
+  return m.pos === 0 && m.round === roundsOf_(ms, m.type);
+}
+
 function assignTables_(ms, T) {
   const busy = {};
   ms.forEach(function (m) {
-    if (m.status === TSTATUS.WAIT || m.status === TSTATUS.BYE) { m.table = ''; return; }
+    if (m.status === TSTATUS.WAIT || m.status === TSTATUS.BYE || isFinal_(ms, m)) { m.table = ''; return; } // 決勝は台を指定しない
     if (!m.table) return;
     if (m.status === TSTATUS.PROGRESS) { busy[m.table] = true; return; }
     if (m.status === TSTATUS.NONE) {
@@ -330,12 +336,12 @@ function assignTables_(ms, T) {
   // 新たに対戦相手が決まった試合に呼出順を付ける
   let maxSeq = 0;
   ms.forEach(function (m) {
-    if (m.status === TSTATUS.WAIT || m.status === TSTATUS.BYE) m.seq = '';
+    if (m.status === TSTATUS.WAIT || m.status === TSTATUS.BYE || isFinal_(ms, m)) m.seq = '';
     if (m.seq) maxSeq = Math.max(maxSeq, m.seq);
   });
-  ms.filter(function (m) { return m.status === TSTATUS.NONE && !m.seq; }).sort(tablePriority_(ms))
+  ms.filter(function (m) { return m.status === TSTATUS.NONE && !m.seq && !isFinal_(ms, m); }).sort(tablePriority_(ms))
     .forEach(function (m) { m.seq = ++maxSeq; });
-  const queue = ms.filter(function (m) { return m.status === TSTATUS.NONE && !m.table; }).sort(bySeq_);
+  const queue = ms.filter(function (m) { return m.status === TSTATUS.NONE && !m.table && !isFinal_(ms, m); }).sort(bySeq_);
   const assigned = [];
   for (let t = 1; t <= T && queue.length; t++) {
     if (busy[t]) continue;
@@ -468,6 +474,7 @@ function buildTourData_(ms, settings, byNum) {
     list.forEach(function (m) {
       m.roundName = roundName_(R, m.round, m.pos);
       m.third = m.round === R && m.pos === 1 && R >= 2;
+      m.isFinal = m.round === R && m.pos === 0;
       fill(m, 1); fill(m, 2);
     });
     const final = findT_(list, type, R, 0);
@@ -492,8 +499,11 @@ function buildTourData_(ms, settings, byNum) {
     const m = active.filter(function (x) { return x.table === t; })[0];
     out.board.push({ table: t, id: m ? m.id : null, extra: t > T });
   }
-  out.queue = ms.filter(function (m) { return m.status === TSTATUS.NONE && !m.table; })
+  out.queue = ms.filter(function (m) { return m.status === TSTATUS.NONE && !m.table && !isFinal_(ms, m); })
     .sort(bySeq_).map(function (m) { return m.id; });
+  // 対戦相手が決まった決勝（台は個別に案内）
+  out.finals = ms.filter(function (m) { return isFinal_(ms, m) && (m.status === TSTATUS.NONE || m.status === TSTATUS.PROGRESS); })
+    .sort(function (a, b) { return a.type === TTYPE.UPPER ? -1 : 1; }).map(function (m) { return m.id; });
   return out;
 }
 
