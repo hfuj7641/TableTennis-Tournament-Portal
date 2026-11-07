@@ -129,13 +129,27 @@ function adminAutoAssignLate(tid, pw) {
   return adminGetData(tid, pw, res.added.length ? res.added : [{ none: true }]);
 }
 
-/** 画面の設定値を保存してから、上位・下位トーナメントを作成する */
-function adminCreateBrackets(tid, pw, input, force) {
+/** 画面の設定値を保存してから、作成前の確認用にトーナメント表を作る（シートには書かない） */
+function adminPreviewBrackets(tid, pw, input) {
   useTournament_(tid);
   checkAdmin_(pw);
   const s = input ? saveSettings_(input) : getSettings_();
   if (input && s.title) updateTournament_(tid, { name: s.title });
-  return JSON.stringify(createBrackets_(s, !!force));
+  if (input && tourExists_()) reassignTables_(s);
+  clearCache_();
+  return JSON.stringify(previewBrackets_(s));
+}
+
+/**
+ * 上位・下位トーナメントを作成する。
+ * planId: 確認画面（adminPreviewBrackets）の組み合わせをそのまま使う
+ */
+function adminCreateBrackets(tid, pw, input, force, planId) {
+  useTournament_(tid);
+  checkAdmin_(pw);
+  const s = input ? saveSettings_(input) : getSettings_();
+  if (input && s.title) updateTournament_(tid, { name: s.title });
+  return JSON.stringify(createBrackets_(s, !!force, planId || null));
 }
 
 function adminExportStandings(tid, pw) {

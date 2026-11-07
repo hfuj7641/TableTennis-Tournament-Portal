@@ -21,6 +21,7 @@
     selectTab: 'league',
     phase: 'tour',       // 選択画面: 'tour' | 'league'
     tour: null,          // トーナメントのデータ
+    preview: null,       // トーナメント作成前の確認データ
     search: '',
     entryCode: '',
     adminPw: '',
@@ -266,6 +267,7 @@
     if (v === 'league') return withLeague(renderLeague);
     if (v === 'standings') return withLeague(renderStandings);
     if (v === 'bracket') return withTour(renderBracket);
+    if (v === 'tpreview') return renderTPreview();
     if (v === 'entry') {
       if (S.params.kind === 'tour') return withTour(function () { var ce = currentEntry(); if (ce) renderEntry(ce.ctx, ce.m); else go('bracket', { type: S.params.type }, true); });
       return withLeague(function (L) { renderEntry(leagueCtx(L), findMatch(L, S.params.id)); });
@@ -1302,8 +1304,14 @@
         '<p class="small" style="margin-top:0">各リーグの上位 <b>' + s.advanceCount + '名</b> が上位トーナメント、それ以外が下位トーナメントです。' +
         'シードは「リーグ内順位 → 勝率 → セット率 → 獲得セット数」で決め、上位シードほど1回戦が不戦勝になります。1回戦で同じリーグの選手どうしが当たらないように配置します。台は <b>' + s.tableCount + '台</b> を上位・下位で共用します。</p>' +
         (A.tour ? '<div class="notice info">作成済み: 上位 ' + A.tour.upper.players + '名（' + A.tour.upper.done + '/' + A.tour.upper.total + '試合）・下位 ' + A.tour.lower.players + '名（' + A.tour.lower.done + '/' + A.tour.lower.total + '試合）</div>' : '') +
-        (!A.leaguesComplete ? '<div class="notice warn">まだ終わっていないリーグ戦の試合があります。</div>' : '') +
-        '<div class="row-actions"><button class="btn accent block" data-act="adm-tour">🏆 ' + (A.tour ? 'トーナメントを作り直す' : 'トーナメント作成') + '</button></div></div>';
+        '<div class="league-status">' + A.leagues.map(function (l) {
+          var ok = l.total > 0 && l.done === l.total;
+          return '<span class="badge ' + (ok ? 'done' : 'progress') + '">リーグ' + l.no + ' ' + l.done + '/' + l.total + (ok ? ' ✓' : '') + '</span>';
+        }).join(' ') + '</div>' +
+        (A.leaguesComplete ? '<p class="small" style="color:var(--ok);margin:8px 0 0"><b>✅ すべてのリーグ戦が終了しました。トーナメントを作成できます。</b></p>'
+          : '<p class="small" style="color:var(--warn);margin:8px 0 0"><b>まだ終わっていないリーグ戦の試合があります。</b>全試合が終わってから作成してください。</p>') +
+        '<div class="row-actions"><button class="btn ' + (A.leaguesComplete ? 'accent' : '') + ' block" data-act="adm-tour">🏆 トーナメント表を確認して' + (A.tour ? '作り直す' : '作成') + '</button></div>' +
+        '<p class="small muted" style="margin-bottom:0">ボタンを押すと、まずシード順とトーナメント表の確認画面が表示されます（この時点ではまだ作成されません）。</p></div>';
     }
 
     if (A.leagues.length && !A.tour) {
@@ -1415,35 +1423,85 @@
       }).join('') + '</ol>';
   }
 
-  function adminCreateTour(force) {
+  /** ① トーナメント表を作って確認画面を開く（まだ作成しない） */
+  function adminPreviewTour() {
     var f = adminForm();
-    var first = force ? Promise.resolve(true) : modal({
-      title: 'トーナメントを作成しますか？', icon: '🏆',
-      html: '<p>リーグ戦の結果から、上位トーナメント（' + f.upperSets + 'セットマッチ）と下位トーナメント（' + f.lowerSets + 'セットマッチ）を作成します。台は ' + f.tableCount + '台 です。</p>',
-      buttons: [{ label: 'やめる', value: false, cls: 'ghost' }, { label: '作成する', value: true, cls: 'accent' }],
+    adminCall('adminPreviewBrackets', f).then(function (r) {
+      if (f.adminPassword) S.adminPw = f.adminPassword;
+      S.preview = { planId: r.planId, tour: decorateTour(r.tour), summary: r.summary, reasons: r.reasons, leagues: r.leagues, tables: r.tables, type: 'upper' };
+      go('tpreview', {});
+    }).catch(function () {});
+  }
+
+  /** ② 確認画面の内容でトーナメントを作成する */
+  function createFromPreview(force) {
+    var P = S.preview;
+    if (!P) return;
+    var ask = force ? Promise.resolve(true) : modal({
+      title: 'この内容でトーナメントを作成しますか？', icon: '🏆',
+      html: (P.reasons.length ? '<div class="notice warn" style="margin-top:0"><ul style="margin:0;padding-left:18px">' + P.reasons.map(function (x) { return '<li>' + esc(x) + '</li>'; }).join('') + '</ul></div>' : '') +
+        '<p>作成すると、選手・閲覧用の画面にトーナメントが表示され、台 ' + P.tables + '台 に最初の試合が呼び出されます。</p>',
+      buttons: [{ label: 'やめる', value: false, cls: 'ghost' }, { label: '作成する', value: true, cls: P.reasons.length ? 'danger' : 'accent' }],
+      dismissable: false,
     });
-    first.then(function (ok) {
+    ask.then(function (ok) {
       if (!ok) return;
-      adminCall('adminCreateBrackets', f, !!force).then(function (r) {
-        if (r.needConfirm) {
-          return modal({
-            title: '確認してください', icon: '⚠️',
-            html: '<ul>' + r.reasons.map(function (x) { return '<li>' + esc(x) + '</li>'; }).join('') + '</ul><p>このまま作成しますか？</p>',
-            buttons: [{ label: 'やめる', value: false, cls: 'ghost' }, { label: '作成する', value: true, cls: 'danger' }],
-            dismissable: false,
-          }).then(function (ok2) { if (ok2) adminCreateTour(true); });
-        }
+      adminCall('adminCreateBrackets', null, true, P.planId).then(function (r) {
+        S.preview = null;
         S.tour = null;
         S.phase = 'tour';
         loadBoot(true).catch(function () {});
-        modal({
-          title: 'トーナメントを作成しました', icon: '✅',
-          html: '<p class="small muted">シード順（1番が第1シード）</p>' + seedListHtml('🥇 上位トーナメント', r.summary.upper) + seedListHtml('下位トーナメント', r.summary.lower) +
-            '<p class="small muted">台 ' + r.tables + '台 に最初の試合を割り当てました。</p>',
-          buttons: [{ label: 'OK', value: true, cls: 'primary' }],
-        }).then(adminReload);
+        toast('トーナメントを作成しました');
+        go('admin', {}, true);
+        adminReload().catch(function () {});
       }).catch(function () {});
     });
+  }
+
+  function renderTPreview() {
+    var P = S.preview;
+    if (!P) { go('admin', {}, true); return; }
+    var T = P.tour;
+    var key = T[P.type] ? P.type : (T.upper ? 'upper' : 'lower');
+    var b = T[key];
+    var html = topbar('トーナメント作成前の確認', 'admin') + '<div class="wrap wide">';
+    html += '<div class="notice info">まだ作成されていません。内容を確認して、問題がなければ一番下の「この内容で作成」を押してください。</div>';
+
+    // リーグ戦の終了状況
+    var allDone = P.leagues.every(function (l) { return l.complete; });
+    html += '<div class="section-title">① リーグ戦の終了状況</div><div class="card">' +
+      '<div class="league-status">' + P.leagues.map(function (l) {
+        return '<span class="badge ' + (l.complete ? 'done' : 'progress') + '">リーグ' + l.no + ' ' + l.done + '/' + l.total + (l.complete ? ' ✓' : '') + '</span>';
+      }).join(' ') + '</div>' +
+      (allDone ? '<p class="small" style="margin:8px 0 0;color:var(--ok)"><b>✅ すべてのリーグ戦が終了しています。</b></p>'
+        : '<p class="small" style="margin:8px 0 0;color:var(--warn)"><b>⚠️ まだ終わっていない試合があります。</b>このまま作成すると、現時点の順位でトーナメントを組みます。</p>') + '</div>';
+    if (P.reasons.length) {
+      html += '<div class="notice warn"><ul style="margin:0;padding-left:18px">' + P.reasons.map(function (x) { return '<li>' + esc(x) + '</li>'; }).join('') + '</ul></div>';
+    }
+
+    // シード
+    html += '<div class="section-title">② シード順</div>';
+    if (T.upper && T.lower) {
+      html += '<div class="tabs"><button class="' + (key === 'upper' ? 'on' : '') + '" data-act="tp-tab" data-type="upper">🥇 上位トーナメント</button>' +
+        '<button class="' + (key === 'lower' ? 'on' : '') + '" data-act="tp-tab" data-type="lower">下位トーナメント</button></div>';
+    }
+    html += '<div class="card">' + seedListHtml(b.type + 'トーナメント', P.summary[key]) + '</div>';
+
+    // トーナメント表
+    html += '<div class="section-title">③ トーナメント表</div>' + bracketHtml(b, null);
+    // 最初の台
+    html += '<div class="section-title">④ 最初に台に呼び出す試合</div><div class="queue">' +
+      T.board.filter(function (x) { return x.id; }).map(function (x) {
+        var m = T.byId[x.id];
+        return '<div class="qitem"><span class="qno">' + x.table + '</span><span class="badge ' + (m.type === '上位' ? 'upper' : 'lower') + '">' + m.type + '</span>' +
+          '<span class="small muted">' + esc(m.roundName) + '・台' + x.table + '</span><span class="qnames">' + esc(m.n1) + ' <span class="muted">vs</span> ' + esc(m.n2) + '</span></div>';
+      }).join('') + '</div>';
+
+    html += '<div class="entry-actions" style="margin-top:24px"><button class="btn" data-act="back" data-to="admin" data-p="{}">戻る</button>' +
+      '<button class="btn accent" data-act="tp-create">🏆 この内容で作成</button></div>';
+    html += '<p class="small muted" style="text-align:center">成績が完全に同じ選手の順番はランダムです。戻ってもう一度「確認」を押すと組み合わせが変わる場合があります。</p>';
+    html += '</div>';
+    app.innerHTML = html;
   }
 
   function adminCreate(force) {
@@ -1576,6 +1634,7 @@
         break;
       case 'tmatch': {
         if (ev.target.closest('[data-act="tedit"]')) return;
+        if (S.view === 'tpreview') return; // 確認画面では試合を開かない
         var tm = S.tour && S.tour.byId[el.getAttribute('data-id')];
         if (!tm) return;
         if (S.mode === 'player' && playable(tm) && tm.status !== STATUS.DONE) openEntry(tourCtx(tm), tm);
@@ -1588,7 +1647,14 @@
         break;
       }
       case 'adm-tour':
-        adminCreateTour(false);
+        adminPreviewTour();
+        break;
+      case 'tp-tab':
+        S.preview.type = el.getAttribute('data-type');
+        render();
+        break;
+      case 'tp-create':
+        createFromPreview(false);
         break;
       case 'standings':
         go('standings', { league: S.params.league, focus: S.params.focus || null });

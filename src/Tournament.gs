@@ -433,69 +433,121 @@ function buildTourData_(ms, settings, byNum) {
 /* ------------------------------------------------------------------ */
 
 /**
- * リーグ戦の結果からトーナメントを作成する。
- * 未終了のリーグがある・既に結果がある場合は、force でないと needConfirm を返す。
+ * リーグ戦の結果からトーナメントの組み合わせを作る（シートには書かない）。
+ * 戻り値: { ms, summary, reasons, tour(表示用), leagues(各リーグの進行状況) }
  */
-function createBrackets_(settings, force) {
+function planBrackets_(settings) {
+  validateSettings_(settings);
+  const snap = buildSnapshot_({ settings: settings });
+  if (!snap.leagueList.length) throw new Error('リーグ戦がまだ作成されていません。');
+
+  const reasons = [];
+  const incomplete = snap.leagueList.filter(function (no) { return !snap.leagues[no].complete; });
+  if (incomplete.length) {
+    reasons.push('終わっていない試合があるリーグ: ' + incomplete.map(function (no) {
+      const L = snap.leagues[no];
+      return 'リーグ' + no + '（' + L.done + '/' + L.total + '試合）';
+    }).join('、') + '。現時点の順位で作成することになります。');
+  }
+  const existing = readTMatches_();
+  const results = existing.filter(function (m) { return m.status === TSTATUS.PROGRESS || m.status === TSTATUS.DONE; }).length;
+  if (existing.length) reasons.push('トーナメントは作成済みです' + (results ? '（' + results + '試合の結果が入力済み。作り直すと消えます）' : '') + '。作り直します。');
+
+  const upper = [];
+  const lower = [];
+  snap.leagueList.forEach(function (no) {
+    snap.leagues[no].standings.forEach(function (s, i) {
+      const e = {
+        num: s.num, name: s.name, team: s.team, league: no, rank: i + 1,
+        wins: s.wins, played: s.played, setsWon: s.setsWon, setsLost: s.setsLost, ratioInf: s.ratioInf,
+      };
+      (i < settings.advanceCount ? upper : lower).push(e);
+    });
+  });
+
+  let ms = [];
+  const summary = {};
+  [[TTYPE.UPPER, upper, settings.upperSets], [TTYPE.LOWER, lower, settings.lowerSets]].forEach(function (def) {
+    const type = def[0], entries = def[1], bestOf = def[2];
+    const key = type === TTYPE.UPPER ? 'upper' : 'lower';
+    if (entries.length < 2) {
+      summary[key] = { count: entries.length, seeds: [], skipped: true };
+      return;
+    }
+    const seeded = seedPlayers_(entries);
+    const B = bracketSize_(seeded.length);
+    ms = ms.concat(buildBracketMatches_(type, placeSlots_(seeded, B), bestOf, settings.thirdPlace));
+    summary[key] = {
+      count: seeded.length, size: B, byes: B - seeded.length,
+      seeds: seeded.map(function (e) {
+        return { seed: e.seed, num: e.num, name: e.name, team: e.team, league: e.league, rank: e.rank, wins: e.wins, losses: e.played - e.wins, setsWon: e.setsWon, setsLost: e.setsLost, ratioInf: e.ratioInf };
+      }),
+    };
+  });
+  if (!ms.length) throw new Error('トーナメントを作れる人数がいません（各トーナメント2名以上必要です）。');
+  assignTables_(ms, settings.tableCount);
+
+  const byNum = {};
+  snap.boot.players.forEach(function (p) { byNum[p.num] = p; });
+  return {
+    ms: ms,
+    summary: summary,
+    reasons: reasons,
+    tour: buildTourData_(JSON.parse(JSON.stringify(ms)), settings, byNum),
+    leagues: snap.leagueList.map(function (no) {
+      const L = snap.leagues[no];
+      return { no: no, done: L.done, total: L.total, complete: L.complete };
+    }),
+  };
+}
+
+/** プレビュー後にリーグ戦の結果・設定・トーナメントが変わっていないかを判定するための値 */
+function tourSignature_(settings) {
+  const lm = valuesToMatches_(readMatchValues_()).map(function (m) { return m.id + ':' + m.ver + ':' + m.status; }).join(',');
+  const tm = readTMatches_().map(function (m) { return m.id + ':' + m.ver; }).join(',');
+  return [settings.advanceCount, settings.upperSets, settings.lowerSets, settings.tableCount, settings.thirdPlace].join('|') + '#' + lm + '#' + tm;
+}
+
+const CACHE_KEY_PLAN = 'tourplan_v1';
+
+/** 作成前の確認用に組み合わせを作り、30分間保存しておく */
+function previewBrackets_(settings) {
+  const plan = planBrackets_(settings);
+  const id = Utilities.getUuid().replace(/-/g, '').slice(0, 12);
+  CacheService.getScriptCache().put(ck_(CACHE_KEY_PLAN), JSON.stringify({
+    id: id, ms: plan.ms, summary: plan.summary, reasons: plan.reasons, signature: tourSignature_(settings),
+  }), 1800);
+  return { planId: id, summary: plan.summary, reasons: plan.reasons, tour: plan.tour, leagues: plan.leagues, tables: settings.tableCount };
+}
+
+/**
+ * トーナメントを作成してシートに書き込む。
+ * planId を渡すと、確認画面で表示した組み合わせをそのまま使う。
+ * 注意事項（未終了のリーグ・作り直し）がある場合は、force でないと needConfirm を返す。
+ */
+function createBrackets_(settings, force, planId) {
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(30000)) throw new Error('他の処理が実行中です。少し待ってから再度実行してください。');
   try {
-    validateSettings_(settings);
-    const snap = buildSnapshot_({ settings: settings });
-    if (!snap.leagueList.length) throw new Error('リーグ戦がまだ作成されていません。');
-
-    const reasons = [];
-    const incomplete = snap.leagueList.filter(function (no) { return !snap.leagues[no].complete; });
-    if (incomplete.length) {
-      reasons.push('終わっていない試合があるリーグ: ' + incomplete.map(function (no) {
-        const L = snap.leagues[no];
-        return 'リーグ' + no + '（' + L.done + '/' + L.total + '試合）';
-      }).join('、') + '。現時点の順位で作成します。');
-    }
-    const existing = readTMatches_();
-    const results = existing.filter(function (m) { return m.status === TSTATUS.PROGRESS || m.status === TSTATUS.DONE; }).length;
-    if (existing.length) reasons.push('トーナメントは作成済みです' + (results ? '（' + results + '試合の結果が入力済み。作り直すと消えます）' : '') + '。作り直します。');
-    if (reasons.length && !force) return { needConfirm: true, reasons: reasons };
-
-    const upper = [];
-    const lower = [];
-    snap.leagueList.forEach(function (no) {
-      snap.leagues[no].standings.forEach(function (s, i) {
-        const e = {
-          num: s.num, name: s.name, team: s.team, league: no, rank: i + 1,
-          wins: s.wins, played: s.played, setsWon: s.setsWon, setsLost: s.setsLost, ratioInf: s.ratioInf,
-        };
-        (i < settings.advanceCount ? upper : lower).push(e);
-      });
-    });
-
-    let ms = [];
-    const summary = {};
-    [[TTYPE.UPPER, upper, settings.upperSets], [TTYPE.LOWER, lower, settings.lowerSets]].forEach(function (def) {
-      const type = def[0], entries = def[1], bestOf = def[2];
-      const key = type === TTYPE.UPPER ? 'upper' : 'lower';
-      if (entries.length < 2) {
-        summary[key] = { count: entries.length, seeds: [], skipped: true };
-        return;
+    let plan;
+    if (planId) {
+      const raw = CacheService.getScriptCache().get(ck_(CACHE_KEY_PLAN));
+      plan = raw ? JSON.parse(raw) : null;
+      if (!plan || plan.id !== planId) throw new Error('確認画面の有効期限が切れました。もう一度「トーナメント表を確認して作成」からやり直してください。');
+      if (plan.signature !== tourSignature_(settings)) {
+        throw new Error('確認画面を開いた後に、リーグ戦の結果または設定が変わりました。もう一度「トーナメント表を確認して作成」からやり直してください。');
       }
-      const seeded = seedPlayers_(entries);
-      const B = bracketSize_(seeded.length);
-      ms = ms.concat(buildBracketMatches_(type, placeSlots_(seeded, B), bestOf, settings.thirdPlace));
-      summary[key] = {
-        count: seeded.length, size: B, byes: B - seeded.length,
-        seeds: seeded.map(function (e) {
-          return { seed: e.seed, num: e.num, name: e.name, team: e.team, league: e.league, rank: e.rank, wins: e.wins, losses: e.played - e.wins, setsWon: e.setsWon, setsLost: e.setsLost, ratioInf: e.ratioInf };
-        }),
-      };
-    });
-    if (!ms.length) throw new Error('トーナメントを作れる人数がいません（各トーナメント2名以上必要です）。');
+    } else {
+      plan = planBrackets_(settings);
+    }
+    if (plan.reasons.length && !force) return { needConfirm: true, reasons: plan.reasons };
 
-    assignTables_(ms, settings.tableCount);
-    writeTMatches_(ms);
-    const snap2 = buildSnapshot_({ settings: settings, tmatches: ms });
+    writeTMatches_(plan.ms);
+    CacheService.getScriptCache().removeAll([ck_(CACHE_KEY_PLAN)]);
+    const snap2 = buildSnapshot_({ settings: settings, tmatches: readTMatches_() });
     putSnapshotCache_(snap2);
     SpreadsheetApp.flush();
-    return { ok: true, summary: summary, tables: settings.tableCount };
+    return { ok: true, summary: plan.summary, tables: settings.tableCount };
   } finally {
     lock.releaseLock();
   }
