@@ -1,0 +1,16 @@
+<!DOCTYPE html>
+<html lang="ja">
+  <head>
+    <base target="_top" />
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <?!= include('Styles'); ?>
+  </head>
+  <body>
+    <div id="app"><div class="loading"><div class="spinner"></div>読み込み中…</div></div>
+    <div id="modal-root"></div>
+    <div id="toast" role="status" aria-live="polite"></div>
+    <div id="busy" hidden><div class="spinner"></div></div>
+    <?!= include('App'); ?>
+  </body>
+</html>

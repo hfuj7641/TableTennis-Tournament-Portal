@@ -1,0 +1,1046 @@
+<script>
+(function () {
+  'use strict';
+
+  var STATUS = { NONE: '未実施', PROGRESS: '試合中', DONE: '終了' };
+  var MAX_SETS = 7;
+  var REFRESH_MS = 45000;
+
+  var S = {
+    mode: null,          // 'player' | 'viewer' | 'admin'
+    boot: null,
+    leagues: {},         // no -> league data
+    view: 'home',
+    params: {},
+    selectTab: 'league',
+    search: '',
+    entryCode: '',
+    adminPw: '',
+    admin: null,
+    entry: null,         // 入力中の状態
+    modalOpen: false,
+  };
+
+  var app = document.getElementById('app');
+
+  /* ---------------- utilities ---------------- */
+
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  }
+
+  function call(fn) {
+    var args = Array.prototype.slice.call(arguments, 1);
+    return new Promise(function (resolve, reject) {
+      var runner = google.script.run
+        .withSuccessHandler(function (r) {
+          if (typeof r === 'string') {
+            try { resolve(JSON.parse(r)); } catch (e) { resolve(r); }
+          } else resolve(r);
+        })
+        .withFailureHandler(function (e) { reject(e); });
+      runner[fn].apply(runner, args);
+    });
+  }
+
+  function errMsg(e) {
+    var m = (e && (e.message || e)) || 'エラーが発生しました';
+    return String(m).replace(/^Exception:\s*/, '').replace(/^Error:\s*/, '');
+  }
+
+  function busy(on) { document.getElementById('busy').hidden = !on; }
+
+  var toastTimer;
+  function toast(msg) {
+    var t = document.getElementById('toast');
+    t.textContent = msg;
+    t.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () { t.classList.remove('show'); }, 2600);
+  }
+
+  function store(k, v) {
+    try { if (v === undefined) return sessionStorage.getItem(k); sessionStorage.setItem(k, v); } catch (e) { return null; }
+  }
+
+  function need(bestOf) { return Math.floor(bestOf / 2) + 1; }
+
+  function validGame(x, y) {
+    var w = Math.max(x, y), l = Math.min(x, y);
+    return (w === 11 && l <= 9) || (w > 11 && w - l === 2);
+  }
+
+  function setsText(sets) {
+    return (sets || []).map(function (s) { return s[0] + '-' + s[1]; }).join(', ');
+  }
+
+  function statusClass(st) { return st === STATUS.DONE ? 'done' : st === STATUS.PROGRESS ? 'progress' : 'none'; }
+
+  function findMatch(L, id) {
+    for (var i = 0; i < L.matches.length; i++) if (L.matches[i].id === id) return L.matches[i];
+    return null;
+  }
+
+  function fmtRate(s) { return s.played ? (Math.round((s.wins / s.played) * 1000) / 10).toFixed(1) + '%' : '-'; }
+  function fmtRatio(s) {
+    if (s.ratioInf) return '♾️';
+    if (!s.played) return '-';
+    return (Math.round(s.ratio * 100) / 100).toFixed(2);
+  }
+
+  /* ---------------- modal ---------------- */
+
+  /**
+   * opts: { title, icon, html, buttons: [{label, value, cls}] }
+   * 戻り値: 押されたボタンの value（背景タップは null）
+   */
+  function modal(opts) {
+    return new Promise(function (resolve) {
+      var root = document.getElementById('modal-root');
+      var bg = document.createElement('div');
+      bg.className = 'modal-bg';
+      var defs = opts.buttons || [{ label: 'OK', value: true, cls: 'primary' }];
+      var btns = defs.map(function (b, i) {
+        return '<button class="btn ' + (b.cls || '') + '" data-i="' + i + '">' + esc(b.label) + '</button>';
+      }).join('');
+      bg.innerHTML =
+        '<div class="modal" role="dialog" aria-modal="true">' +
+        '<h2>' + (opts.icon ? '<span>' + opts.icon + '</span>' : '') + esc(opts.title || '') + '</h2>' +
+        '<div class="body">' + (opts.html || '') + '</div>' +
+        '<div class="actions">' + btns + '</div></div>';
+      S.modalOpen = true;
+      var done = function (v) {
+        S.modalOpen = false;
+        root.removeChild(bg);
+        resolve(v);
+      };
+      bg.addEventListener('click', function (ev) {
+        if (ev.target === bg && opts.dismissable !== false) return done(null);
+        var b = ev.target.closest('button[data-i]');
+        if (b) {
+          var def = defs[Number(b.getAttribute('data-i'))];
+          if (opts.beforeClose) {
+            var r = opts.beforeClose(def.value, bg);
+            if (r === false) return;
+          }
+          done(def.value);
+        }
+      });
+      root.appendChild(bg);
+      if (opts.onOpen) opts.onOpen(bg);
+    });
+  }
+
+  function alertBox(title, html, icon) {
+    return modal({ title: title, icon: icon || '⚠️', html: html, buttons: [{ label: 'OK', value: true, cls: 'primary' }] });
+  }
+
+  /* ---------------- navigation ---------------- */
+
+  var hasHistory = !!(window.google && google.script && google.script.history);
+
+  function go(view, params, replace) {
+    S.view = view;
+    S.params = params || {};
+    var state = { view: view, params: S.params, mode: S.mode };
+    if (hasHistory) {
+      try {
+        if (replace) google.script.history.replace(state);
+        else google.script.history.push(state);
+      } catch (e) { /* ignore */ }
+    }
+    render();
+    window.scrollTo(0, 0);
+  }
+
+  if (hasHistory) {
+    google.script.history.setChangeHandler(function (e) {
+      var st = e && e.state;
+      if (st && st.view) {
+        S.view = st.view;
+        S.params = st.params || {};
+        S.mode = st.mode || S.mode;
+      } else {
+        S.view = 'home';
+        S.params = {};
+      }
+      if (S.view === 'admin' && !S.adminPw) S.view = 'home';
+      render();
+    });
+  }
+
+  function topbar(title, backTo, backParams) {
+    var chip = S.mode === 'player' ? '<span class="chip player">選手用</span>'
+      : S.mode === 'viewer' ? '<span class="chip viewer">閲覧用</span>'
+      : S.mode === 'admin' ? '<span class="chip admin">管理者</span>' : '';
+    return '<div class="topbar"><div class="topbar-in">' +
+      (backTo ? '<button class="back" data-act="back" data-to="' + esc(backTo) + '" data-p="' + esc(JSON.stringify(backParams || {})) + '">‹ 戻る</button>' : '') +
+      '<h1>' + esc(title) + '</h1>' + chip + '</div></div>';
+  }
+
+  /* ---------------- data ---------------- */
+
+  function loadBoot(silent) {
+    if (!silent) busy(true);
+    return call('apiGetBoot').then(function (b) {
+      S.boot = b;
+      busy(false);
+      return b;
+    }).catch(function (e) {
+      busy(false);
+      throw e;
+    });
+  }
+
+  function loadLeague(no, silent) {
+    if (!silent) busy(true);
+    return call('apiGetLeague', no).then(function (L) {
+      S.leagues[no] = L;
+      busy(false);
+      return L;
+    }).catch(function (e) {
+      busy(false);
+      throw e;
+    });
+  }
+
+  function showError(e) {
+    alertBox('エラー', '<p>' + esc(errMsg(e)).replace(/\n/g, '<br>') + '</p>');
+  }
+
+  /* ---------------- render ---------------- */
+
+  function render() {
+    var v = S.view;
+    if (v === 'home') return renderHome();
+    if (v === 'select') return renderSelect();
+    if (v === 'league') return withLeague(renderLeague);
+    if (v === 'standings') return withLeague(renderStandings);
+    if (v === 'entry') return withLeague(renderEntry);
+    if (v === 'admin') return renderAdmin();
+    renderHome();
+  }
+
+  function withLeague(fn) {
+    var no = S.params.league;
+    if (S.leagues[no]) return fn(S.leagues[no]);
+    app.innerHTML = topbar('リーグ ' + no, 'select') + '<div class="loading"><div class="spinner"></div>読み込み中…</div>';
+    loadLeague(no, true).then(function () { render(); }).catch(showError);
+  }
+
+  /* ----- home ----- */
+
+  function renderHome() {
+    var title = (S.boot && S.boot.title) || '卓球大会';
+    app.innerHTML =
+      '<div class="home">' +
+      '<div class="hero-ball">🏓</div>' +
+      '<h1>' + esc(title) + '</h1>' +
+      '<p class="sub">リーグ戦 試合結果ポータル</p>' +
+      '<button class="big-btn player" data-act="mode" data-mode="player"><span class="ico">✍️</span><span><b>選手用（試合結果の入力）</b><small>自分の試合の結果を入力・修正できます</small></span></button>' +
+      '<button class="big-btn viewer" data-act="mode" data-mode="viewer"><span class="ico">👀</span><span><b>結果確認用（保護者・観覧）</b><small>試合結果と順位を見ることができます（閲覧のみ）</small></span></button>' +
+      '<button class="admin-link" data-act="admin">管理者メニュー</button>' +
+      '</div>';
+  }
+
+  function enterMode(mode) {
+    var proceed = function () {
+      S.mode = mode;
+      go('select', {});
+    };
+    if (mode !== 'player' || !S.boot || !S.boot.requiresEntryCode) return proceed();
+    var saved = store('entryCode');
+    if (saved) { S.entryCode = saved; return proceed(); }
+    modal({
+      title: '選手入力パスコード',
+      icon: '🔑',
+      html: '<p class="small muted">大会スタッフから案内されたパスコードを入力してください。</p>' +
+        '<input id="ec" class="search" type="text" autocomplete="off" inputmode="text" placeholder="パスコード">',
+      buttons: [{ label: 'キャンセル', value: false, cls: 'ghost' }, { label: '入る', value: true, cls: 'accent' }],
+      onOpen: function (bg) { setTimeout(function () { bg.querySelector('#ec').focus(); }, 50); },
+      beforeClose: function (v, bg) {
+        if (v) S._ec = bg.querySelector('#ec').value;
+      },
+    }).then(function (ok) {
+      if (!ok) return;
+      var code = String(S._ec || '').trim();
+      busy(true);
+      call('apiVerifyEntryCode', code).then(function (r) {
+        busy(false);
+        if (r.ok) {
+          S.entryCode = code;
+          store('entryCode', code);
+          proceed();
+        } else alertBox('パスコードが違います', '<p>もう一度入力してください。</p>');
+      }).catch(function (e) { busy(false); showError(e); });
+    });
+  }
+
+  /* ----- select ----- */
+
+  function renderSelect() {
+    var b = S.boot;
+    var html = topbar(S.mode === 'player' ? '試合を選ぶ' : '結果を見る', 'home') + '<div class="wrap">';
+    if (!b || !b.leagues.length) {
+      html += '<div class="card empty" style="margin-top:16px">リーグ戦はまだ作成されていません。<br>しばらくお待ちください。<div style="margin-top:12px"><button class="btn" data-act="reload-boot">🔄 更新</button></div></div></div>';
+      app.innerHTML = html;
+      return;
+    }
+    html += '<div class="tabs"><button class="' + (S.selectTab === 'league' ? 'on' : '') + '" data-act="tab" data-tab="league">リーグ番号で選ぶ</button>' +
+      '<button class="' + (S.selectTab === 'name' ? 'on' : '') + '" data-act="tab" data-tab="name">名前で選ぶ</button></div>';
+
+    if (S.selectTab === 'league') {
+      html += '<div class="league-grid">' + b.leagues.map(function (L) {
+        var pct = L.total ? Math.round((L.done / L.total) * 100) : 0;
+        var st = L.complete ? '<span class="badge done">終了</span>' : L.done || L.inProgress ? '<span class="badge progress">進行中</span>' : '<span class="badge none">未開始</span>';
+        return '<button class="league-card" data-act="open-league" data-league="' + L.no + '">' +
+          '<div class="ln">リーグ ' + L.no + '</div>' +
+          '<div class="meta">' + L.count + '名 ・ ' + L.done + '/' + L.total + '試合 ' + st + '</div>' +
+          '<div class="bar"><i style="width:' + pct + '%"></i></div></button>';
+      }).join('') + '</div>';
+    } else {
+      html += '<input class="search" id="search" type="search" placeholder="名前・所属・くじ番号で検索" value="' + esc(S.search) + '" autocomplete="off">' +
+        '<div class="name-list" id="name-list">' + nameListHtml() + '</div>';
+    }
+    html += '<p class="small muted" style="text-align:center;margin-top:20px">最終更新 ' + esc(b.generatedAt || '') + ' <button class="btn ghost" data-act="reload-boot" style="min-height:auto;padding:2px 8px">🔄</button></p>';
+    html += '</div>';
+    app.innerHTML = html;
+  }
+
+  function nameListHtml() {
+    var q = S.search.trim().toLowerCase();
+    var list = S.boot.players.filter(function (p) {
+      if (!q) return true;
+      return (p.name + ' ' + (p.team || '') + ' ' + p.num).toLowerCase().indexOf(q) >= 0 || String(p.name).replace(/\s/g, '').toLowerCase().indexOf(q.replace(/\s/g, '')) >= 0;
+    });
+    if (!list.length) return '<div class="empty">該当する選手がいません</div>';
+    return list.map(function (p) {
+      return '<button class="name-item" data-act="open-player" data-league="' + p.league + '" data-num="' + p.num + '">' +
+        '<span class="num">' + p.num + '</span><span class="nm">' + esc(p.name) + (p.team ? '<small>' + esc(p.team) + '</small>' : '') + '</span>' +
+        '<span class="lg">リーグ' + p.league + ' ›</span></button>';
+    }).join('');
+  }
+
+  /* ----- league (match list) ----- */
+
+  function playerName(L, num) {
+    for (var i = 0; i < L.players.length; i++) if (L.players[i].num === num) return L.players[i].name;
+    return '#' + num;
+  }
+
+  function matchCard(L, m, focus) {
+    var mine = focus && (m.p1 === focus || m.p2 === focus);
+    var st = statusClass(m.status);
+    var hasScore = m.status !== STATUS.NONE;
+    var w1 = m.status === STATUS.DONE && m.winner === m.p1;
+    var w2 = m.status === STATUS.DONE && m.winner === m.p2;
+    var actions = '';
+    if (S.mode === 'player') {
+      if (m.status === STATUS.DONE) actions = '<span class="btn" data-act="edit" data-id="' + esc(m.id) + '">✏️ 修正</span>';
+      else if (m.status === STATUS.PROGRESS) actions = '<span class="btn accent" data-act="edit" data-id="' + esc(m.id) + '">続きを入力</span>';
+      else actions = '<span class="btn accent" data-act="edit" data-id="' + esc(m.id) + '">結果を入力</span>';
+    }
+    return '<button class="match st-' + st + (mine ? ' mine' : '') + '" data-act="match" data-id="' + esc(m.id) + '">' +
+      '<div class="m-head"><span>第' + m.no + '試合</span><span class="sp"></span><span class="badge ' + st + '">' + esc(m.status) + '</span></div>' +
+      '<div class="m-body">' +
+      '<div class="m-pl' + (w1 ? ' win' : '') + '"><span class="num">' + m.p1 + '</span>' + esc(m.n1) + '</div>' +
+      (hasScore ? '<div class="m-score">' + m.c1 + ' - ' + m.c2 + '</div>' : '<div class="m-score vs">VS</div>') +
+      '<div class="m-pl r' + (w2 ? ' win' : '') + '">' + esc(m.n2) + '<span class="num">' + m.p2 + '</span></div>' +
+      '</div>' +
+      (m.sets && m.sets.length ? '<div class="m-sets">' + esc(setsText(m.sets)) + '</div>' : '') +
+      (actions ? '<div class="m-actions">' + actions + '</div>' : '') +
+      '</button>';
+  }
+
+  function renderLeague(L) {
+    var focus = S.params.focus || null;
+    var only = !!(focus && S.params.only !== false);
+    var pct = L.total ? Math.round((L.done / L.total) * 100) : 0;
+    var html = topbar('リーグ ' + L.no + '　試合一覧', 'select') + '<div class="wrap">';
+    html += '<div class="summary"><span class="small"><b>' + L.done + '</b> / ' + L.total + ' 試合終了</span><div class="bar"><i style="width:' + pct + '%"></i></div>' +
+      '<button class="icon-btn" data-act="refresh" title="更新">🔄</button></div>';
+    html += '<p class="small muted" style="margin:6px 0 0">' + L.bestOf + 'セットマッチ（' + L.need + 'セット先取）・試合の順番は自由です</p>';
+    html += '<div class="players-row">' + L.players.map(function (p) {
+      return '<button class="pchip' + (focus === p.num ? ' on' : '') + '" data-act="focus" data-num="' + p.num + '"><span class="num">' + p.num + '</span>' + esc(p.name) + '</button>';
+    }).join('') + '</div>';
+    if (focus) {
+      html += '<div class="focus-banner"><span>' + esc(playerName(L, focus)) + ' さんの試合' + (only ? 'のみ表示中' : 'を強調表示中') + '</span>' +
+        '<button data-act="toggle-only">' + (only ? '全試合を表示' : '自分の試合のみ') + '</button>' +
+        '<button data-act="focus" data-num="' + focus + '">✕</button></div>';
+    }
+
+    var list = L.matches.filter(function (m) { return !only || m.p1 === focus || m.p2 === focus; });
+    var active = list.filter(function (m) { return m.status === STATUS.PROGRESS; });
+    var todo = list.filter(function (m) { return m.status === STATUS.NONE; });
+    var done = list.filter(function (m) { return m.status === STATUS.DONE; });
+
+    if (active.length) html += '<div class="section-title">試合中（途中経過）</div>' + active.map(function (m) { return matchCard(L, m, focus); }).join('');
+    if (todo.length) html += '<div class="section-title">これからの試合</div>' + todo.map(function (m) { return matchCard(L, m, focus); }).join('');
+    if (done.length) html += '<div class="section-title">終了した試合</div>' + done.map(function (m) { return matchCard(L, m, focus); }).join('');
+    if (!list.length) html += '<div class="card empty" style="margin-top:16px">試合がありません</div>';
+
+    html += '<button class="result-link" data-act="standings">📊 リーグ ' + L.no + ' の結果（順位表）を見る ›</button>';
+    html += '</div>';
+    app.innerHTML = html;
+  }
+
+  /* ----- standings ----- */
+
+  function renderStandings(L) {
+    var html = topbar('リーグ ' + L.no + '　結果', 'league', { league: L.no, focus: S.params.focus || null });
+    html += '<div class="wrap">';
+    html += '<div style="display:flex;align-items:center;gap:8px;margin-top:16px">' +
+      (L.complete ? '<span class="final">全試合終了・順位確定</span>' : '<span class="provisional">暫定順位（' + L.done + '/' + L.total + '試合終了）</span>') +
+      '<span style="flex:1"></span><button class="icon-btn" data-act="refresh" title="更新">🔄</button></div>';
+
+    // 順位表
+    html += '<div class="section-title">順位</div><div class="table-wrap"><table><thead><tr>' +
+      '<th>順位</th><th class="name">選手</th><th>勝敗</th><th>勝率</th><th>セット</th><th>セット率</th><th>得失点</th><th>進出</th></tr></thead><tbody>';
+    L.standings.forEach(function (s) {
+      var adv = s.advance === 'upper';
+      html += '<tr class="' + (adv ? 'adv' : '') + '">' +
+        '<td class="rank rank-' + s.rank + '">' + s.rank + (s.tied ? '<span class="small muted">=</span>' : '') + '</td>' +
+        '<td class="name"><span class="num" style="margin-right:6px">' + s.num + '</span>' + esc(s.name) + '</td>' +
+        '<td>' + s.wins + '勝' + s.losses + '敗</td>' +
+        '<td>' + fmtRate(s) + '</td>' +
+        '<td>' + s.setsWon + '-' + s.setsLost + '</td>' +
+        '<td>' + fmtRatio(s) + '</td>' +
+        '<td>' + s.ptsWon + '-' + s.ptsLost + '</td>' +
+        '<td>' + (adv ? '<span class="badge upper">上位T</span>' : '<span class="badge lower">下位T</span>') + '</td></tr>';
+    });
+    html += '</tbody></table></div>';
+    html += '<p class="legend">順位の決め方: ①勝率 ②セット率（獲得セット÷失セット、失セット0は♾️）③獲得セット数 ④当該選手間の直接対決。上位' + L.advanceCount + '名が上位トーナメント（上位T）へ進出。</p>';
+
+    // 星取表
+    html += '<div class="section-title">対戦表（タップで詳細）</div><div class="table-wrap"><table class="cross"><thead><tr><th class="name">選手</th>';
+    L.players.forEach(function (p) { html += '<th><span class="num">' + p.num + '</span></th>'; });
+    html += '</tr></thead><tbody>';
+    L.players.forEach(function (row) {
+      html += '<tr><td class="name"><span class="num" style="margin-right:6px">' + row.num + '</span>' + esc(row.name) + '</td>';
+      L.players.forEach(function (col) {
+        if (row.num === col.num) { html += '<td class="cell self"></td>'; return; }
+        var m = null;
+        for (var i = 0; i < L.matches.length; i++) {
+          var x = L.matches[i];
+          if ((x.p1 === row.num && x.p2 === col.num) || (x.p1 === col.num && x.p2 === row.num)) { m = x; break; }
+        }
+        if (!m) { html += '<td class="cell"><span class="n">-</span></td>'; return; }
+        var mine = m.p1 === row.num;
+        var a = mine ? m.c1 : m.c2, b = mine ? m.c2 : m.c1;
+        var inner;
+        if (m.status === STATUS.DONE) {
+          var won = m.winner === row.num;
+          inner = '<span class="' + (won ? 'w' : 'l') + '"><span class="mark">' + (won ? '○' : '●') + '</span>' + a + '-' + b + '</span>';
+        } else if (m.status === STATUS.PROGRESS) {
+          inner = '<span class="p"><span class="mark">途中</span>' + a + '-' + b + '</span>';
+        } else inner = '<span class="n">－</span>';
+        html += '<td class="cell"><button data-act="match" data-id="' + esc(m.id) + '">' + inner + '</button></td>';
+      });
+      html += '</tr>';
+    });
+    html += '</tbody></table></div>';
+    html += '<p class="legend">行の選手から見た獲得セット数（○勝ち ●負け）。セルをタップすると試合の詳細を表示します。</p>';
+    html += '<button class="result-link" style="background:var(--card);color:var(--primary)" data-act="back" data-to="league" data-p="' + esc(JSON.stringify({ league: L.no, focus: S.params.focus || null })) + '">‹ 試合一覧に戻る</button>';
+    html += '</div>';
+    app.innerHTML = html;
+  }
+
+  /* ----- match detail (modal) ----- */
+
+  function showDetail(L, m) {
+    var w1 = m.status === STATUS.DONE && m.winner === m.p1;
+    var w2 = m.status === STATUS.DONE && m.winner === m.p2;
+    var html = '<div class="small muted" style="text-align:center">リーグ' + L.no + ' ・ ' + m.bestOf + 'セットマッチ ・ <span class="badge ' + statusClass(m.status) + '">' + esc(m.status) + '</span></div>' +
+      '<div class="detail-score"><div class="pn">' + (w1 ? '🏆 ' : '') + '<span class="num">' + m.p1 + '</span><br>' + esc(m.n1) + '</div>' +
+      '<div class="sc">' + (m.status === STATUS.NONE ? '<span class="muted" style="font-size:18px">VS</span>' : m.c1 + ' - ' + m.c2) + '</div>' +
+      '<div class="pn">' + (w2 ? '🏆 ' : '') + '<span class="num">' + m.p2 + '</span><br>' + esc(m.n2) + '</div></div>';
+    if (m.sets && m.sets.length) {
+      html += '<div class="table-wrap" style="box-shadow:none;border:1px solid var(--line)"><table class="detail-sets"><thead><tr><th>セット</th><th>' + esc(m.n1) + '</th><th>' + esc(m.n2) + '</th></tr></thead><tbody>' +
+        m.sets.map(function (s, i) {
+          return '<tr><td class="muted">第' + (i + 1) + 'セット</td><td class="' + (s[0] > s[1] ? 'w' : '') + '">' + s[0] + '</td><td class="' + (s[1] > s[0] ? 'w' : '') + '">' + s[1] + '</td></tr>';
+        }).join('') + '</tbody></table></div>';
+    } else if (m.status === STATUS.NONE) {
+      html += '<p class="muted" style="text-align:center">まだ試合は行われていません。</p>';
+    }
+    if (m.updated) html += '<p class="small muted" style="text-align:right;margin:8px 0 0">最終更新 ' + esc(m.updated) + '</p>';
+
+    var buttons = [{ label: '閉じる', value: null, cls: 'ghost' }];
+    if (S.mode === 'player') {
+      buttons.push({ label: m.status === STATUS.NONE ? '結果を入力する' : m.status === STATUS.PROGRESS ? '続きを入力する' : '✏️ 修正する', value: 'edit', cls: 'accent' });
+    }
+    modal({ title: '第' + m.no + '試合', icon: '🏓', html: html, buttons: buttons }).then(function (v) {
+      if (v === 'edit') openEntry(L, m);
+    });
+  }
+
+  /* ----- entry ----- */
+
+  function openEntry(L, m, replace) {
+    var sets = [];
+    for (var i = 0; i < m.bestOf; i++) {
+      var s = m.sets && m.sets[i];
+      sets.push(s ? [String(s[0]), String(s[1])] : ['', '']);
+    }
+    S.entry = { id: m.id, ver: m.ver, c1: m.status === STATUS.NONE ? null : m.c1, c2: m.status === STATUS.NONE ? null : m.c2, sets: sets, wasStatus: m.status };
+    go('entry', { league: L.no, id: m.id, focus: S.params.focus || null }, replace);
+  }
+
+  function renderEntry(L) {
+    var m = findMatch(L, S.params.id);
+    if (!m) { go('league', { league: L.no }, true); return; }
+    if (S.mode !== 'player') { go('league', { league: L.no }, true); return; }
+    if (!S.entry || S.entry.id !== m.id) {
+      openEntry(L, m, true);
+      return;
+    }
+    var E = S.entry;
+    var n = need(m.bestOf);
+    var html = topbar('第' + m.no + '試合　結果入力', 'league', { league: L.no, focus: S.params.focus || null }) + '<div class="wrap">';
+    html += '<div class="entry-head"><div class="small muted">リーグ ' + L.no + ' ・ ' + m.bestOf + 'セットマッチ（' + n + 'セット先取）</div>' +
+      '<div class="vs"><div><span class="num">' + m.p1 + '</span><br>' + esc(m.n1) + '</div><div class="x">VS</div><div><span class="num">' + m.p2 + '</span><br>' + esc(m.n2) + '</div></div></div>';
+    if (E.wasStatus === STATUS.DONE) html += '<div class="notice warn">⚠️ 終了済みの試合の結果を修正しています。</div>';
+    if (E.wasStatus === STATUS.PROGRESS) html += '<div class="notice info">途中経過が保存されています。続きを入力してください。</div>';
+
+    html += '<div class="section-title">① 獲得セット数</div><div class="card" id="counts">' + countsHtml(m, E) + '</div>';
+
+    html += '<div class="section-title">② 各セットの得点</div><div class="card">' +
+      '<div class="set-head"><span></span><span>' + esc(m.n1) + '</span><span></span><span>' + esc(m.n2) + '</span><span></span></div>';
+    for (var i = 0; i < m.bestOf; i++) {
+      html += '<div class="set-row" data-row="' + i + '"><label>第' + (i + 1) + 'セット</label>' +
+        '<input type="number" inputmode="numeric" pattern="[0-9]*" min="0" max="99" data-set="' + i + '" data-side="0" value="' + esc(E.sets[i][0]) + '" aria-label="第' + (i + 1) + 'セット ' + esc(m.n1) + '">' +
+        '<span class="dash">-</span>' +
+        '<input type="number" inputmode="numeric" pattern="[0-9]*" min="0" max="99" data-set="' + i + '" data-side="1" value="' + esc(E.sets[i][1]) + '" aria-label="第' + (i + 1) + 'セット ' + esc(m.n2) + '">' +
+        '<span class="mk"></span></div>';
+    }
+    html += '<div class="calc" id="calc"></div></div>';
+    html += '<p class="small muted">試合の途中でも保存できます（途中経過として記録されます）。</p>';
+    html += '<div class="entry-actions"><button class="btn" data-act="back" data-to="league" data-p="' + esc(JSON.stringify({ league: L.no, focus: S.params.focus || null })) + '">キャンセル</button>' +
+      '<button class="btn accent" data-act="save">💾 保存</button></div>';
+    if (E.wasStatus !== STATUS.NONE) html += '<button class="reset-link" data-act="reset">この試合の結果を消して「未実施」に戻す</button>';
+    html += '</div>';
+    app.innerHTML = html;
+    updateCalc(m);
+  }
+
+  function countsHtml(m, E) {
+    var n = need(m.bestOf);
+    var seg = function (side, cur) {
+      var s = '';
+      for (var k = 0; k <= n; k++) s += '<button class="' + (cur === k ? 'on' : '') + '" data-act="count" data-side="' + side + '" data-v="' + k + '">' + k + '</button>';
+      return '<div class="seg">' + s + '</div>';
+    };
+    return '<div class="count-row"><div class="who">' + esc(m.n1) + '</div>' + seg(1, E.c1) + '</div>' +
+      '<div class="count-row"><div class="who">' + esc(m.n2) + '</div>' + seg(2, E.c2) + '</div>';
+  }
+
+  /** 入力中の各セットを解析する */
+  function analyzeEntry(m) {
+    var E = S.entry;
+    var n = need(m.bestOf);
+    var errors = [];
+    var warnings = [];
+    var sets = [];
+    var a = 0, b = 0;
+    var gap = false;
+    for (var i = 0; i < m.bestOf; i++) {
+      var x = String(E.sets[i][0]).trim(), y = String(E.sets[i][1]).trim();
+      if (x === '' && y === '') { gap = true; continue; }
+      if (x === '' || y === '') { errors.push('第' + (i + 1) + 'セット: 両方の選手の得点を入力してください'); continue; }
+      var xi = Number(x), yi = Number(y);
+      if (!Number.isInteger(xi) || !Number.isInteger(yi) || xi < 0 || yi < 0 || xi > 99 || yi > 99) { errors.push('第' + (i + 1) + 'セット: 得点は0〜99の数字で入力してください'); continue; }
+      if (gap) { errors.push('第' + (i + 1) + 'セット: 前のセットが空欄です。第1セットから順に入力してください'); continue; }
+      if (a >= n || b >= n) { errors.push('第' + (i + 1) + 'セット: すでに勝敗が決まっています（' + n + 'セット先取）。このセットは不要です'); continue; }
+      if (xi === yi) { errors.push('第' + (i + 1) + 'セット: 同点（' + xi + '-' + yi + '）になっています'); continue; }
+      if (!validGame(xi, yi)) warnings.push('第' + (i + 1) + 'セット（' + xi + '-' + yi + '）: 11点先取・10-10以降は2点差のルールに合いません');
+      if (xi > yi) a++; else b++;
+      sets.push([xi, yi]);
+    }
+    return { sets: sets, a: a, b: b, n: n, errors: errors, warnings: warnings, winner: a >= n ? 1 : b >= n ? 2 : 0 };
+  }
+
+  function updateCalc(m) {
+    var r = analyzeEntry(m);
+    var E = S.entry;
+    var rows = app.querySelectorAll('.set-row');
+    for (var i = 0; i < rows.length; i++) {
+      var inputs = rows[i].querySelectorAll('input');
+      var x = Number(inputs[0].value), y = Number(inputs[1].value);
+      var filled = inputs[0].value !== '' && inputs[1].value !== '';
+      inputs[0].classList.toggle('won', filled && x > y);
+      inputs[1].classList.toggle('won', filled && y > x);
+      rows[i].querySelector('.mk').textContent = filled && x !== y && !validGame(x, y) ? '⚠️' : '';
+    }
+    var calc = document.getElementById('calc');
+    if (!calc) return;
+    var mismatch = E.c1 !== null && E.c2 !== null && (E.c1 !== r.a || E.c2 !== r.b);
+    calc.className = 'calc' + (mismatch ? ' bad' : '');
+    calc.innerHTML = '得点から計算した獲得セット数: <b>' + r.a + ' - ' + r.b + '</b>' + (mismatch ? '<br><span style="color:var(--danger)">①の獲得セット数と一致していません</span>' : '');
+  }
+
+  function saveEntry(L, m) {
+    var E = S.entry;
+    var r = analyzeEntry(m);
+    var c1 = E.c1, c2 = E.c2;
+
+    if (!r.sets.length && (c1 === null || c1 === 0) && (c2 === null || c2 === 0)) {
+      if (E.wasStatus !== STATUS.NONE) return doReset(L, m);
+      return alertBox('結果が入力されていません', '<p>獲得セット数と各セットの得点を入力してください。</p>');
+    }
+    if (r.errors.length) {
+      return alertBox('入力内容を確認してください', '<ul>' + r.errors.map(function (e) { return '<li>' + esc(e) + '</li>'; }).join('') + '</ul>');
+    }
+    if (c1 === null || c2 === null) {
+      return alertBox('獲得セット数を選んでください', '<p>「① 獲得セット数」で、両方の選手の獲得セット数を選んでください。</p><p class="small muted">各セットの得点から計算すると <b>' + r.a + ' - ' + r.b + '</b> です。</p>');
+    }
+    if (c1 > r.n || c2 > r.n || (c1 === r.n && c2 === r.n)) {
+      return alertBox('獲得セット数が正しくありません', '<p>' + m.bestOf + 'セットマッチ（' + r.n + 'セット先取）です。獲得セット数を確認してください。</p>');
+    }
+    if (c1 !== r.a || c2 !== r.b) {
+      return alertBox('獲得セット数とセットの結果が一致しません',
+        '<p>入力内容に食い違いがあります。入力画面に戻って確認してください。</p>' +
+        '<table style="margin-top:8px"><tbody>' +
+        '<tr><th style="text-align:left">① 獲得セット数</th><td><b>' + c1 + ' - ' + c2 + '</b></td></tr>' +
+        '<tr><th style="text-align:left">② 各セットの得点から計算</th><td><b>' + r.a + ' - ' + r.b + '</b></td></tr></tbody></table>');
+    }
+
+    var chain = Promise.resolve(true);
+    if (r.warnings.length) {
+      chain = chain.then(function () {
+        return modal({
+          title: '得点を確認してください', icon: '⚠️',
+          html: '<p>卓球のルール上ありえない得点があります。入力ミスではありませんか？</p><ul>' + r.warnings.map(function (w) { return '<li>' + esc(w) + '</li>'; }).join('') + '</ul>',
+          buttons: [{ label: 'このまま続ける', value: true, cls: 'ghost' }, { label: '入力に戻る', value: false, cls: 'primary' }],
+        });
+      });
+    }
+    chain.then(function (ok) {
+      if (!ok) return false;
+      if (!r.winner) {
+        return modal({
+          title: '試合途中ですね？', icon: '⏸️',
+          html: '<p>まだどちらの選手も <b>' + r.n + 'セット</b> を取っていません（現在 <b>' + r.a + ' - ' + r.b + '</b>）。</p>' +
+            '<p><b>試合途中</b>の場合は「途中経過として保存」を押してください。</p>' +
+            '<p class="notice warn" style="margin:0"><b>試合が終わっている場合</b>は「入力に戻る」を押して、獲得セット数を含めて<b>全セットの結果</b>を入力してください。</p>',
+          buttons: [{ label: '入力に戻る', value: false, cls: 'ghost' }, { label: '途中経過として保存', value: true, cls: 'accent' }],
+          dismissable: false,
+        });
+      }
+      var wn = r.winner === 1 ? m.n1 : m.n2;
+      return modal({
+        title: '試合結果を保存します', icon: '🏆',
+        html: '<div class="detail-score"><div class="pn">' + esc(m.n1) + '</div><div class="sc">' + r.a + ' - ' + r.b + '</div><div class="pn">' + esc(m.n2) + '</div></div>' +
+          '<p style="text-align:center"><b>' + esc(wn) + '</b> さんの勝ち</p><p class="small muted" style="text-align:center">' + esc(setsText(r.sets)) + '</p>',
+        buttons: [{ label: '戻る', value: false, cls: 'ghost' }, { label: '保存する', value: true, cls: 'accent' }],
+      });
+    }).then(function (ok) {
+      if (!ok) return;
+      submit(L, m, { matchId: m.id, ver: E.ver, sets: r.sets, c1: c1, c2: c2 });
+    });
+  }
+
+  function doReset(L, m) {
+    modal({
+      title: '結果を消しますか？', icon: '🗑️',
+      html: '<p>第' + m.no + '試合（' + esc(m.n1) + ' vs ' + esc(m.n2) + '）の結果を消して「未実施」に戻します。</p>',
+      buttons: [{ label: 'やめる', value: false, cls: 'ghost' }, { label: '結果を消す', value: true, cls: 'danger' }],
+    }).then(function (ok) {
+      if (ok) submit(L, m, { matchId: m.id, ver: S.entry.ver, reset: true });
+    });
+  }
+
+  function submit(L, m, payload, force) {
+    payload.code = S.entryCode;
+    payload.force = !!force;
+    busy(true);
+    call('apiSaveMatch', payload).then(function (res) {
+      busy(false);
+      if (res.conflict) {
+        var c = res.current;
+        return modal({
+          title: '他の人が先に更新しました', icon: '🔄',
+          html: '<p>この試合は、あなたが画面を開いた後に別の人が結果を更新しています。</p>' +
+            '<p>現在の記録: <b>' + esc(c.status) + '</b>' + (c.status !== STATUS.NONE ? '（' + c.c1 + ' - ' + c.c2 + '）<br><span class="small muted">' + esc(setsText(c.sets)) + '</span>' : '') + '</p>' +
+            '<p>あなたの入力内容で上書きしますか？</p>',
+          buttons: [{ label: '上書きせず最新を見る', value: 'reload', cls: 'ghost' }, { label: '上書きする', value: 'force', cls: 'danger' }],
+          dismissable: false,
+        }).then(function (v) {
+          if (v === 'force') return submit(L, m, payload, true);
+          S.entry = null;
+          return loadLeague(L.no).then(function () { go('league', { league: L.no, focus: S.params.focus || null }, true); });
+        });
+      }
+      S.leagues[L.no] = res.league;
+      S.entry = null;
+      if (S.boot) loadBoot(true).catch(function () {});
+      toast(payload.reset ? '結果を消しました' : '保存しました');
+      go('league', { league: L.no, focus: S.params.focus || null }, true);
+    }).catch(function (e) {
+      busy(false);
+      showError(e);
+    });
+  }
+
+  /* ----- admin ----- */
+
+  function renderAdmin() {
+    var A = S.admin;
+    if (!A) { go('home', {}, true); return; }
+    var s = A.settings;
+    var st = A.stats;
+    var html = topbar('管理者メニュー', 'home') + '<div class="wrap">';
+
+    html += '<div class="section-title">参加者の状況（「参加者」シート）</div><div class="card">' +
+      '<div class="stats">' +
+      '<div class="stat"><b>' + st.total + '</b><small>登録</small></div>' +
+      '<div class="stat"><b>' + st.attend + '</b><small>参加確認済</small></div>' +
+      '<div class="stat"><b>' + st.paid + '</b><small>支払確認済</small></div>' +
+      '<div class="stat"><b>' + st.eligible + '</b><small>リーグ対象<br>（参加・支払・くじ番号あり）</small></div>' +
+      '</div>';
+    if (A.duplicates.length) {
+      html += '<div class="notice warn">⚠️ くじ番号が重複しています:<ul class="list-plain">' + A.duplicates.map(function (d) { return '<li>' + d.num + '番: ' + esc(d.names.join('、')) + '</li>'; }).join('') + '</ul></div>';
+    }
+    if (A.missingNumber.length) {
+      html += '<div class="notice warn">参加・支払済みでくじ番号が未記入: ' + A.missingNumber.length + '名<ul class="list-plain">' + A.missingNumber.map(function (p) { return '<li>' + esc(p.name) + '（' + p.row + '行目）</li>'; }).join('') + '</ul>' +
+        '<div class="row-actions"><button class="btn" data-act="adm-assign">🎲 空いている番号を自動で割り当てる</button></div></div>';
+    }
+    if (A.attendNotPaid.length) {
+      html += '<div class="notice info">参加確認済みで支払いが未確認: ' + A.attendNotPaid.map(function (p) { return esc(p.name); }).join('、') + '</div>';
+    }
+    html += '<div class="row-actions"><button class="btn ghost" data-act="adm-reload">🔄 最新の状態を読み込む</button></div></div>';
+
+    var opt = function (v) { return [1, 3, 5, 7].map(function (k) { return '<option value="' + k + '"' + (k === v ? ' selected' : '') + '>' + k + 'セットマッチ（' + need(k) + 'セット先取）</option>'; }).join(''); };
+    html += '<div class="section-title">大会の設定（「設定」シート）</div><div class="card" id="adm-form">' +
+      '<div class="form-row"><label>大会名</label><input name="title" value="' + esc(s.title) + '"></div>' +
+      '<div class="grid2">' +
+      '<div class="form-row"><label>リーグ戦の数</label><input name="leagueCount" type="number" min="1" inputmode="numeric" value="' + s.leagueCount + '"></div>' +
+      '<div class="form-row"><label>各リーグの標準選手数</label><input name="playersPerLeague" type="number" min="2" inputmode="numeric" value="' + s.playersPerLeague + '"></div>' +
+      '</div>' +
+      '<div class="form-row"><label>リーグ戦の1試合のセット数</label><select name="leagueSets">' + opt(s.leagueSets) + '</select></div>' +
+      '<div class="grid2">' +
+      '<div class="form-row"><label>上位トーナメントのセット数</label><select name="upperSets">' + opt(s.upperSets) + '</select></div>' +
+      '<div class="form-row"><label>下位トーナメントのセット数</label><select name="lowerSets">' + opt(s.lowerSets) + '</select></div>' +
+      '</div>' +
+      '<div class="form-row"><label>上位トーナメント進出人数（各リーグ）</label><input name="advanceCount" type="number" min="1" inputmode="numeric" value="' + s.advanceCount + '"></div>' +
+      '<div class="grid2">' +
+      '<div class="form-row"><label>選手入力パスコード</label><input name="entryCode" value="' + esc(s.entryCode) + '" autocomplete="off"><div class="hint">空欄なら不要</div></div>' +
+      '<div class="form-row"><label>管理者パスワード</label><input name="adminPassword" value="' + esc(s.adminPassword) + '" autocomplete="off"></div>' +
+      '</div>' +
+      '<button class="btn primary block" data-act="adm-save">設定を保存</button></div>';
+
+    html += '<div class="section-title">リーグ戦作成</div><div class="card"><div id="adm-preview" class="preview"></div>' +
+      (A.leagues.length ? '<div class="notice warn">作成済みのリーグ: ' + A.leagues.map(function (l) { return 'リーグ' + l.no + '（' + l.count + '名・' + l.done + '/' + l.total + '試合）'; }).join('、') +
+        (A.resultCount ? '<br><b>' + A.resultCount + '試合の結果が入力済みです。作り直すと消えます。</b>' : '') + '</div>' : '') +
+      '<div class="row-actions"><button class="btn accent block" data-act="adm-create">🎲 リーグ戦作成（ランダムに振り分け）</button></div>' +
+      '<p class="small muted">上の設定を保存してから、参加・支払済みでくじ番号のある選手をランダムにリーグへ振り分け、総当たりの試合表を作成します。</p></div>';
+
+    if (A.leagues.length) {
+      html += '<div class="section-title">当日参加の選手をリーグに追加</div><div class="card">';
+      if (A.unassigned.length) {
+        html += '<div class="grid2"><div class="form-row"><label>選手</label><select id="add-num">' + A.unassigned.map(function (p) { return '<option value="' + p.num + '">' + p.num + ' ' + esc(p.name) + '</option>'; }).join('') + '</select></div>' +
+          '<div class="form-row"><label>追加先リーグ</label><select id="add-league">' + A.leagues.map(function (l) { return '<option value="' + l.no + '">リーグ' + l.no + '（' + l.count + '名）</option>'; }).join('') + '</select></div></div>' +
+          '<button class="btn block" data-act="adm-add">リーグに追加（試合を追加作成）</button>';
+      } else html += '<p class="muted small" style="margin:0">リーグに入っていない対象選手はいません。</p>';
+      html += '</div>';
+    }
+
+    html += '<div class="section-title">その他</div><div class="card"><div class="row-actions" style="margin:0">' +
+      '<button class="btn" data-act="adm-export">「順位」シートを更新</button>' +
+      '<button class="btn ghost" data-act="adm-cache">表示キャッシュをクリア</button></div></div>';
+    html += '</div>';
+    app.innerHTML = html;
+    updatePreview();
+  }
+
+  function adminForm() {
+    var f = document.getElementById('adm-form');
+    var out = {};
+    f.querySelectorAll('input[name],select[name]').forEach(function (el) {
+      out[el.name] = el.type === 'number' || el.tagName === 'SELECT' ? parseInt(el.value, 10) : el.value;
+    });
+    return out;
+  }
+
+  function updatePreview() {
+    var el = document.getElementById('adm-preview');
+    if (!el || !S.admin) return;
+    var f = adminForm();
+    var N = S.admin.stats.eligible;
+    var L = f.leagueCount || 0;
+    var per = f.playersPerLeague || 0;
+    var rec = per ? Math.max(1, Math.round(N / per)) : 0;
+    var html = '<div>対象選手: <b>' + N + '名</b> ／ 標準 ' + per + '名 → 推奨リーグ数 <b>' + rec + '</b>' +
+      (rec && rec !== L ? ' <button class="btn" style="min-height:auto;padding:2px 10px;font-size:13px" data-act="adm-rec" data-v="' + rec + '">推奨値を使う</button>' : '') + '</div>';
+    if (L >= 1 && N >= L * 2) {
+      var base = Math.floor(N / L), extra = N % L, sizes = [];
+      for (var i = 0; i < L; i++) sizes.push(base + (i < extra ? 1 : 0));
+      var games = sizes.reduce(function (t, n) { return t + (n * (n - 1)) / 2; }, 0);
+      html += '<div class="sizes">' + sizes.map(function (n, i) { return '<span>リーグ' + (i + 1) + ': ' + n + '名</span>'; }).join('') + '</div>' +
+        '<div class="small muted" style="margin-top:6px">合計 ' + games + ' 試合' + (extra ? '（人数が割り切れないため一部のリーグが1名多くなります）' : '') + '</div>';
+    } else if (L >= 1) {
+      html += '<div class="notice warn">' + L + 'リーグには最低 ' + L * 2 + ' 名必要です。</div>';
+    }
+    el.innerHTML = html;
+  }
+
+  function adminCall(fn) {
+    var args = Array.prototype.slice.call(arguments, 1);
+    busy(true);
+    return call.apply(null, [fn, S.adminPw].concat(args)).then(function (r) { busy(false); return r; })
+      .catch(function (e) { busy(false); showError(e); throw e; });
+  }
+
+  function adminReload() {
+    return adminCall('adminGetData').then(function (d) { S.admin = d; render(); });
+  }
+
+  function adminLogin() {
+    modal({
+      title: '管理者ログイン', icon: '🔒',
+      html: '<input id="apw" class="search" type="password" placeholder="管理者パスワード" autocomplete="current-password">',
+      buttons: [{ label: 'キャンセル', value: false, cls: 'ghost' }, { label: 'ログイン', value: true, cls: 'primary' }],
+      onOpen: function (bg) { setTimeout(function () { bg.querySelector('#apw').focus(); }, 50); },
+      beforeClose: function (v, bg) { if (v) S._apw = bg.querySelector('#apw').value; },
+    }).then(function (ok) {
+      if (!ok) return;
+      busy(true);
+      call('adminLogin', S._apw).then(function (d) {
+        busy(false);
+        S.adminPw = S._apw;
+        S.admin = d;
+        S.mode = 'admin';
+        go('admin', {});
+      }).catch(function (e) { busy(false); showError(e); });
+    });
+  }
+
+  function adminCreate(force) {
+    var f = adminForm();
+    var go2 = force ? Promise.resolve(true) : modal({
+      title: 'リーグ戦を作成しますか？', icon: '🎲',
+      html: '<p>現在の設定（' + f.leagueCount + 'リーグ・' + f.leagueSets + 'セットマッチ）で、対象選手 ' + S.admin.stats.eligible + ' 名をランダムに振り分けます。</p>',
+      buttons: [{ label: 'やめる', value: false, cls: 'ghost' }, { label: '作成する', value: true, cls: 'accent' }],
+    });
+    go2.then(function (ok) {
+      if (!ok) return;
+      adminCall('adminCreateLeagues', f, !!force).then(function (r) {
+        if (r.needConfirm) {
+          return modal({
+            title: '入力済みの結果が消えます', icon: '⚠️',
+            html: '<p><b>' + r.resultCount + '試合</b>の結果がすでに入力されています。リーグ戦を作り直すと、これらの結果は<b>すべて消えます</b>。</p><p>本当に作り直しますか？</p>',
+            buttons: [{ label: 'やめる', value: false, cls: 'ghost' }, { label: '作り直す', value: true, cls: 'danger' }],
+            dismissable: false,
+          }).then(function (ok2) { if (ok2) adminCreate(true); });
+        }
+        S.leagues = {};
+        loadBoot(true).catch(function () {});
+        modal({
+          title: 'リーグ戦を作成しました', icon: '✅',
+          html: r.summary.map(function (g) {
+            return '<p style="margin:6px 0"><b>リーグ' + g.league + '</b>（' + g.count + '名・' + g.matches + '試合）<br><span class="small muted">' + g.players.map(esc).join(' / ') + '</span></p>';
+          }).join(''),
+          buttons: [{ label: 'OK', value: true, cls: 'primary' }],
+        }).then(adminReload);
+      }).catch(function () {});
+    });
+  }
+
+  /* ---------------- events ---------------- */
+
+  document.addEventListener('click', function (ev) {
+    var el = ev.target.closest('[data-act]');
+    if (!el || el.closest('.modal-bg')) return;
+    var act = el.getAttribute('data-act');
+    var L = S.leagues[S.params.league];
+
+    switch (act) {
+      case 'mode':
+        enterMode(el.getAttribute('data-mode'));
+        break;
+      case 'admin':
+        adminLogin();
+        break;
+      case 'back': {
+        var to = el.getAttribute('data-to');
+        var p = {};
+        try { p = JSON.parse(el.getAttribute('data-p') || '{}'); } catch (e) { p = {}; }
+        if (S.view === 'entry') S.entry = null;
+        if (to === 'home' && S.mode === 'admin') S.mode = null;
+        go(to, p);
+        break;
+      }
+      case 'tab':
+        S.selectTab = el.getAttribute('data-tab');
+        render();
+        if (S.selectTab === 'name') { var si = document.getElementById('search'); if (si) si.focus(); }
+        break;
+      case 'reload-boot':
+        loadBoot().then(render).catch(showError);
+        break;
+      case 'open-league':
+        openLeague(Number(el.getAttribute('data-league')), null);
+        break;
+      case 'open-player':
+        openLeague(Number(el.getAttribute('data-league')), Number(el.getAttribute('data-num')));
+        break;
+      case 'focus': {
+        var num = Number(el.getAttribute('data-num'));
+        var f = S.params.focus === num ? null : num;
+        go('league', { league: S.params.league, focus: f }, true);
+        break;
+      }
+      case 'toggle-only':
+        go('league', { league: S.params.league, focus: S.params.focus, only: S.params.only === false }, true);
+        break;
+      case 'refresh':
+        loadLeague(S.params.league).then(function () { render(); toast('最新の結果に更新しました'); }).catch(showError);
+        break;
+      case 'standings':
+        go('standings', { league: S.params.league, focus: S.params.focus || null });
+        break;
+      case 'match': {
+        if (ev.target.closest('[data-act="edit"]')) return; // 修正ボタンは別処理
+        var m = L && findMatch(L, el.getAttribute('data-id'));
+        if (!m) return;
+        if (S.mode === 'player' && m.status !== STATUS.DONE && S.view === 'league') openEntry(L, m);
+        else showDetail(L, m);
+        break;
+      }
+      case 'edit': {
+        var m2 = L && findMatch(L, el.getAttribute('data-id'));
+        if (m2) openEntry(L, m2);
+        break;
+      }
+      case 'count': {
+        var side = el.getAttribute('data-side');
+        var v = Number(el.getAttribute('data-v'));
+        if (side === '1') S.entry.c1 = v; else S.entry.c2 = v;
+        var mm = findMatch(L, S.params.id);
+        document.getElementById('counts').innerHTML = countsHtml(mm, S.entry);
+        updateCalc(mm);
+        break;
+      }
+      case 'save':
+        saveEntry(L, findMatch(L, S.params.id));
+        break;
+      case 'reset':
+        doReset(L, findMatch(L, S.params.id));
+        break;
+      case 'adm-reload':
+        adminReload().catch(function () {});
+        break;
+      case 'adm-assign':
+        adminCall('adminAutoAssign').then(function (r) {
+          return alertBox('くじ番号を割り当てました', r.assigned.length ? '<ul>' + r.assigned.map(function (a) { return '<li>' + a.num + '番: ' + esc(a.name) + '</li>'; }).join('') + '</ul><p class="small muted">「参加者」シートに書き込みました。</p>' : '<p>割り当てが必要な選手はいませんでした。</p>', '🎲');
+        }).then(adminReload).catch(function () {});
+        break;
+      case 'adm-save': {
+        var f2 = adminForm();
+        adminCall('adminSaveSettings', f2).then(function (d) {
+          if (f2.adminPassword) S.adminPw = f2.adminPassword;
+          S.admin = d;
+          render();
+          toast('設定を保存しました');
+          loadBoot(true).catch(function () {});
+        }).catch(function () {});
+        break;
+      }
+      case 'adm-rec': {
+        var inp = document.querySelector('#adm-form input[name="leagueCount"]');
+        inp.value = el.getAttribute('data-v');
+        updatePreview();
+        break;
+      }
+      case 'adm-create':
+        adminCreate(false);
+        break;
+      case 'adm-add': {
+        var n = Number(document.getElementById('add-num').value);
+        var lg = Number(document.getElementById('add-league').value);
+        adminCall('adminAddPlayer', n, lg).then(function (r) {
+          S.leagues = {};
+          loadBoot(true).catch(function () {});
+          toast(r.name + ' さんをリーグ' + r.league + 'に追加しました（' + r.added + '試合）');
+          return adminReload();
+        }).catch(function () {});
+        break;
+      }
+      case 'adm-export':
+        adminCall('adminExportStandings').then(function () { toast('「順位」シートを更新しました'); }).catch(function () {});
+        break;
+      case 'adm-cache':
+        adminCall('adminClearCache').then(function () { S.leagues = {}; toast('キャッシュをクリアしました'); }).catch(function () {});
+        break;
+    }
+  });
+
+  document.addEventListener('input', function (ev) {
+    var t = ev.target;
+    if (t.id === 'search') {
+      S.search = t.value;
+      document.getElementById('name-list').innerHTML = nameListHtml();
+      return;
+    }
+    if (t.hasAttribute && t.hasAttribute('data-set') && S.entry) {
+      var i = Number(t.getAttribute('data-set'));
+      var side = Number(t.getAttribute('data-side'));
+      S.entry.sets[i][side] = t.value.replace(/[^0-9]/g, '').slice(0, 2);
+      if (t.value !== S.entry.sets[i][side]) t.value = S.entry.sets[i][side];
+      updateCalc(findMatch(S.leagues[S.params.league], S.params.id));
+      return;
+    }
+    if (t.closest && t.closest('#adm-form')) updatePreview();
+  });
+
+  // Enter キーで次の入力欄へ
+  document.addEventListener('keydown', function (ev) {
+    if (ev.key !== 'Enter' || !ev.target.hasAttribute || !ev.target.hasAttribute('data-set')) return;
+    ev.preventDefault();
+    var inputs = Array.prototype.slice.call(app.querySelectorAll('input[data-set]'));
+    var idx = inputs.indexOf(ev.target);
+    if (idx >= 0 && idx + 1 < inputs.length) inputs[idx + 1].focus();
+    else ev.target.blur();
+  });
+
+  function openLeague(no, focus) {
+    var p = { league: no, focus: focus || null };
+    // キャッシュがあっても開くたびに最新を取りに行く
+    if (S.leagues[no]) {
+      go('league', p);
+      loadLeague(no, true).then(function () { if (S.view === 'league' && S.params.league === no) render(); }).catch(function () {});
+    } else {
+      loadLeague(no).then(function () { go('league', p); }).catch(showError);
+    }
+  }
+
+  // 自動更新（入力画面・ダイアログ表示中は行わない）
+  setInterval(function () {
+    if (document.visibilityState !== 'visible' || S.modalOpen) return;
+    if (S.view === 'league' || S.view === 'standings') {
+      var no = S.params.league;
+      loadLeague(no, true).then(function () {
+        if (!S.modalOpen && (S.view === 'league' || S.view === 'standings') && S.params.league === no) {
+          var y = window.scrollY;
+          render();
+          window.scrollTo(0, y);
+        }
+      }).catch(function () {});
+    } else if (S.view === 'select') {
+      loadBoot(true).then(function () {
+        if (S.view === 'select' && !S.modalOpen && S.selectTab === 'league') render();
+      }).catch(function () {});
+    }
+  }, REFRESH_MS);
+
+  /* ---------------- start ---------------- */
+
+  S.entryCode = store('entryCode') || '';
+  loadBoot(true).then(function () {
+    go('home', {}, true);
+  }).catch(function (e) {
+    go('home', {}, true);
+    showError(e);
+  });
+})();
+</script>
