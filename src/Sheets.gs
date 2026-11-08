@@ -147,7 +147,7 @@ function getSettings_() {
 function normalizeSetting_(d, v) {
   if (d.type === 'bool') return truthy_(v);
   if (d.type === 'string') return String(v == null ? '' : v).trim();
-  const n = parseInt(v, 10);
+  const n = parseInt(String(v == null ? '' : v).replace(/[０-９]/g, function (c) { return String.fromCharCode(c.charCodeAt(0) - 0xfee0); }), 10);
   return isNaN(n) ? d.def : n;
 }
 

@@ -105,6 +105,14 @@
     return html;
   }
 
+  /** 全角数字を半角にして、数字以外を取り除く */
+  function toDigits(v, maxLen) {
+    var d = String(v == null ? '' : v)
+      .replace(/[０-９]/g, function (c) { return String.fromCharCode(c.charCodeAt(0) - 0xfee0); })
+      .replace(/[^0-9]/g, '');
+    return maxLen ? d.slice(0, maxLen) : d;
+  }
+
   function need(bestOf) { return Math.floor(bestOf / 2) + 1; }
 
   function validGame(x, y) {
@@ -653,9 +661,9 @@
       '<div class="set-head"><span></span><span>' + nameHtml(m, 1) + '</span><span></span><span>' + nameHtml(m, 2) + '</span><span></span></div>';
     for (var i = 0; i < m.bestOf; i++) {
       html += '<div class="set-row" data-row="' + i + '"><label>第' + (i + 1) + 'セット</label>' +
-        '<input type="number" inputmode="numeric" pattern="[0-9]*" min="0" max="99" data-set="' + i + '" data-side="0" value="' + esc(E.sets[i][0]) + '" aria-label="第' + (i + 1) + 'セット ' + esc(m.n1) + '">' +
+        '<input type="text" inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="off" data-set="' + i + '" data-side="0" value="' + esc(E.sets[i][0]) + '" aria-label="第' + (i + 1) + 'セット ' + esc(m.n1) + '">' +
         '<span class="dash">-</span>' +
-        '<input type="number" inputmode="numeric" pattern="[0-9]*" min="0" max="99" data-set="' + i + '" data-side="1" value="' + esc(E.sets[i][1]) + '" aria-label="第' + (i + 1) + 'セット ' + esc(m.n2) + '">' +
+        '<input type="text" inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="off" data-set="' + i + '" data-side="1" value="' + esc(E.sets[i][1]) + '" aria-label="第' + (i + 1) + 'セット ' + esc(m.n2) + '">' +
         '<span class="mk"></span></div>';
     }
     html += '<div class="calc" id="calc"></div></div>';
@@ -1355,20 +1363,20 @@
     html += '<div class="section-title">大会の設定（「設定」シート）</div><div class="card" id="adm-form">' +
       '<div class="form-row"><label>大会名</label><input name="title" value="' + esc(s.title) + '"></div>' +
       '<div class="grid2">' +
-      '<div class="form-row"><label>リーグ戦の数</label><input name="leagueCount" type="number" min="1" inputmode="numeric" value="' + s.leagueCount + '"></div>' +
-      '<div class="form-row"><label>各リーグの標準選手数</label><input name="playersPerLeague" type="number" min="2" inputmode="numeric" value="' + s.playersPerLeague + '"></div>' +
+      '<div class="form-row"><label>リーグ戦の数</label><input name="leagueCount" type="text" inputmode="numeric" autocomplete="off" data-num="1" value="' + s.leagueCount + '"></div>' +
+      '<div class="form-row"><label>各リーグの標準選手数</label><input name="playersPerLeague" type="text" inputmode="numeric" autocomplete="off" data-num="1" value="' + s.playersPerLeague + '"></div>' +
       '</div>' +
       '<div class="form-row"><label>リーグ戦の1試合のセット数</label><select name="leagueSets">' + opt(s.leagueSets) + '</select></div>' +
       '<div class="grid2">' +
       '<div class="form-row"><label>上位トーナメントのセット数</label><select name="upperSets">' + opt(s.upperSets) + '</select></div>' +
       '<div class="form-row"><label>下位トーナメントのセット数</label><select name="lowerSets">' + opt(s.lowerSets) + '</select></div>' +
       '</div>' +
-      '<div class="form-row"><label>台の数（トーナメントで使う卓球台）</label><input name="tableCount" type="number" min="1" inputmode="numeric" value="' + s.tableCount + '"><div class="hint">空いた台に次の試合を自動で割り当てます。トーナメント中に変更すると割り当てをやり直します</div></div>' +
+      '<div class="form-row"><label>台の数（トーナメントで使う卓球台）</label><input name="tableCount" type="text" inputmode="numeric" autocomplete="off" data-num="1" value="' + s.tableCount + '"><div class="hint">空いた台に次の試合を自動で割り当てます。トーナメント中に変更すると割り当てをやり直します</div></div>' +
       '<div class="form-row"><label>3位決定戦</label><select name="thirdPlace" data-bool="1">' +
       '<option value="1"' + (s.thirdPlace ? ' selected' : '') + '>行う（準決勝の敗者どうし）</option>' +
       '<option value="0"' + (!s.thirdPlace ? ' selected' : '') + '>行わない</option></select>' +
       '<div class="hint">作成済みのトーナメントでも、ここを変えて保存すると3位決定戦を追加・削除できます（始まっている場合は削除しません）</div></div>' +
-      '<div class="form-row"><label>上位トーナメント進出人数（各リーグ）</label><input name="advanceCount" type="number" min="1" inputmode="numeric" value="' + s.advanceCount + '"></div>' +
+      '<div class="form-row"><label>上位トーナメント進出人数（各リーグ）</label><input name="advanceCount" type="text" inputmode="numeric" autocomplete="off" data-num="1" value="' + s.advanceCount + '"></div>' +
       '<div class="form-row"><label>遅れて来た選手をリーグに自動追加</label><select name="autoAssignLate" data-bool="1">' +
       '<option value="1"' + (s.autoAssignLate ? ' selected' : '') + '>する（人数の少ないリーグへ自動で追加）</option>' +
       '<option value="0"' + (!s.autoAssignLate ? ' selected' : '') + '>しない（管理者が手動で追加）</option></select>' +
@@ -1430,7 +1438,9 @@
     var f = document.getElementById('adm-form');
     var out = {};
     f.querySelectorAll('input[name],select[name]').forEach(function (el) {
-      out[el.name] = el.getAttribute('data-bool') ? el.value === '1' : el.type === 'number' || el.tagName === 'SELECT' ? parseInt(el.value, 10) : el.value;
+      out[el.name] = el.getAttribute('data-bool') ? el.value === '1'
+        : el.getAttribute('data-num') ? parseInt(toDigits(el.value), 10)
+        : el.tagName === 'SELECT' ? parseInt(el.value, 10) : el.value;
     });
     return out;
   }
@@ -1845,21 +1855,44 @@
       document.getElementById('name-list').innerHTML = nameListHtml();
       return;
     }
+    if (ev.isComposing) return; // 日本語入力の変換中は確定してから処理する
     if (t.hasAttribute && t.hasAttribute('data-set') && S.entry) {
-      var i = Number(t.getAttribute('data-set'));
-      var side = Number(t.getAttribute('data-side'));
-      S.entry.sets[i][side] = t.value.replace(/[^0-9]/g, '').slice(0, 2);
-      if (t.value !== S.entry.sets[i][side]) t.value = S.entry.sets[i][side];
-      var ce2 = currentEntry();
-      if (ce2) { updateCalc(ce2.m); autoProgress(ce2.m); }
+      normalizeScoreInput(t);
       return;
     }
+    if (t.hasAttribute && t.hasAttribute('data-num')) normalizeNumInput(t);
     if (t.closest && t.closest('#adm-form')) updatePreview();
   });
 
+  /** 得点の入力欄: 全角→半角、数字以外を削除、最大2桁 */
+  function normalizeScoreInput(t) {
+    var i = Number(t.getAttribute('data-set'));
+    var side = Number(t.getAttribute('data-side'));
+    var v = toDigits(t.value, 2);
+    S.entry.sets[i][side] = v;
+    if (t.value !== v) t.value = v;
+    var ce2 = currentEntry();
+    if (ce2) { updateCalc(ce2.m); autoProgress(ce2.m); }
+  }
+
+  function normalizeNumInput(t) {
+    var v = toDigits(t.value, 3);
+    if (t.value !== v) t.value = v;
+  }
+
+  var onFix = function (ev) {
+    var t = ev.target;
+    if (!t.hasAttribute) return;
+    if (t.hasAttribute('data-set') && S.entry) normalizeScoreInput(t);
+    else if (t.hasAttribute('data-num')) { normalizeNumInput(t); if (t.closest('#adm-form')) updatePreview(); }
+  };
+  document.addEventListener('compositionend', onFix);
+  document.addEventListener('change', onFix);
+  document.addEventListener('blur', onFix, true);
+
   // Enter キーで次の入力欄へ
   document.addEventListener('keydown', function (ev) {
-    if (ev.key !== 'Enter' || !ev.target.hasAttribute || !ev.target.hasAttribute('data-set')) return;
+    if (ev.key !== 'Enter' || ev.isComposing || ev.keyCode === 229 || !ev.target.hasAttribute || !ev.target.hasAttribute('data-set')) return;
     ev.preventDefault();
     var inputs = Array.prototype.slice.call(app.querySelectorAll('input[data-set]'));
     var idx = inputs.indexOf(ev.target);
