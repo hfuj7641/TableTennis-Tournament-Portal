@@ -22,6 +22,7 @@
     phase: 'tour',       // 選択画面: 'tour' | 'league'
     tour: null,          // トーナメントのデータ
     preview: null,       // トーナメント作成前の確認データ
+    tsel: {},            // 一括で試合中にするために選んだ試合ID
     search: '',
     entryCode: '',
     adminPw: '',
@@ -918,16 +919,29 @@
       else if (m.status === STATUS.PROGRESS) playing.push(b);
       else called.push(b);
     });
+    // 一括選択: 呼び出し中でなくなった試合は選択から外す
+    var calledIds = called.map(function (b) { return b.id; });
+    Object.keys(S.tsel).forEach(function (id) { if (calledIds.indexOf(id) < 0) delete S.tsel[id]; });
+    var canBulk = S.mode === 'player' && called.length > 0;
     var card = function (b, kind) {
       var m = T.byId[b.id];
-      return '<button class="tbl ' + kind + (b.extra ? ' extra' : '') + '" data-act="tmatch" data-id="' + esc(m.id) + '">' +
-        '<div class="tno">台' + b.table + ' <span class="badge ' + (m.type === '上位' ? 'upper' : 'lower') + '">' + m.type + '</span>' +
-        (kind === 'called' ? '<span class="callmark">呼び出し中</span>' : '<span class="playmark">試合中</span>') + '</div>' +
+      var sel = kind === 'called' && S.tsel[m.id];
+      return '<div class="tbl ' + kind + (b.extra ? ' extra' : '') + (sel ? ' selected' : '') + '" role="button" tabindex="0" data-act="tmatch" data-id="' + esc(m.id) + '">' +
+        '<div class="tno">' + (kind === 'called' && canBulk ? '<span class="tchk' + (sel ? ' on' : '') + '" data-act="tsel" data-id="' + esc(m.id) + '" role="checkbox" aria-checked="' + (sel ? 'true' : 'false') + '" aria-label="台' + b.table + 'を選択">' + (sel ? '✓' : '') + '</span>' : '') +
+        '台' + b.table + ' <span class="badge ' + (m.type === '上位' ? 'upper' : 'lower') + '">' + m.type + '</span>' +
+        (kind === 'called' ? '<span class="callmark">' + (canBulk ? '呼出中' : '呼び出し中') + '</span>' : '<span class="playmark">試合中</span>') + '</div>' +
         '<div class="small muted">' + esc(m.roundName) + (kind === 'playing' ? ' ・ ' + m.c1 + '-' + m.c2 : '') + '</div>' +
         '<div class="tpl">' + nameHtml(m, 1) + '</div><div class="tpl">' + nameHtml(m, 2) + '</div>' +
-        (kind === 'called' && S.mode === 'player' ? '<div class="small callhint">タップして試合開始・結果入力</div>' : '') + '</button>';
+        (kind === 'called' && S.mode === 'player' ? '<div class="small callhint">タップして試合開始・結果入力</div>' : '') + '</div>';
     };
     html += '<div class="section-title">📣 呼び出し中（新しく割り当てた台・選手は台へ移動してください）</div>';
+    if (canBulk) {
+      var nSel = Object.keys(S.tsel).length;
+      var allOn = nSel === called.length;
+      html += '<div class="bulkbar"><button class="btn ghost" data-act="tsel-all">' + (allOn ? '☑ 選択をすべて外す' : '☐ すべて選択') + '</button>' +
+        '<button class="btn accent" data-act="tstart"' + (nSel ? '' : ' disabled') + '>▶ 選択した' + (nSel ? ' ' + nSel + ' ' : '') + '試合を「試合中」にする</button></div>' +
+        '<div class="small muted" style="margin:0 4px 8px">試合が始まった台の □ にチェックを入れて、まとめて「試合中」に移せます。</div>';
+    }
     html += called.length ? '<div class="board">' + called.map(function (b) { return card(b, 'called'); }).join('') + '</div>'
       : '<div class="small muted board-none">呼び出し中の台はありません</div>';
     html += '<div class="section-title">🏓 試合中</div>';
@@ -1706,6 +1720,22 @@
       case 'tfocus-clear':
         go('bracket', { type: S.params.type }, true);
         break;
+      case 'tsel': {
+        var sid = el.getAttribute('data-id');
+        if (S.tsel[sid]) delete S.tsel[sid]; else S.tsel[sid] = true;
+        keepScroll(render);
+        break;
+      }
+      case 'tsel-all': {
+        var calledNow = (S.tour.board || []).filter(function (b) { var x = b.id && S.tour.byId[b.id]; return x && x.status === STATUS.NONE; }).map(function (b) { return b.id; });
+        if (Object.keys(S.tsel).length === calledNow.length) S.tsel = {};
+        else { S.tsel = {}; calledNow.forEach(function (id) { S.tsel[id] = true; }); }
+        keepScroll(render);
+        break;
+      }
+      case 'tstart':
+        startSelected();
+        break;
       case 'tmatch': {
         if (ev.target.closest('[data-act="tedit"]')) return;
         if (S.view === 'tpreview') return; // 確認画面では試合を開かない
@@ -1836,6 +1866,41 @@
     if (idx >= 0 && idx + 1 < inputs.length) inputs[idx + 1].focus();
     else ev.target.blur();
   });
+
+  /** スクロール位置（縦・トーナメント表の横）を保ったまま再描画 */
+  function keepScroll(fn) {
+    var y = window.scrollY;
+    var bw = document.getElementById('bracket-wrap');
+    var x = bw ? bw.scrollLeft : 0;
+    fn();
+    window.scrollTo(0, y);
+    bw = document.getElementById('bracket-wrap');
+    if (bw) bw.scrollLeft = x;
+  }
+
+  /** 選択した呼び出し中の試合をまとめて「試合中」にする */
+  function startSelected() {
+    var ids = Object.keys(S.tsel);
+    if (!ids.length) return;
+    var list = ids.map(function (id) { return S.tour.byId[id]; }).filter(Boolean).sort(function (a, b) { return a.table - b.table; });
+    modal({
+      title: list.length + '試合を「試合中」にしますか？', icon: '▶',
+      html: '<ul class="list-plain">' + list.map(function (m) {
+        return '<li><b>台' + m.table + '</b> ' + esc(m.type) + 'T ' + esc(m.roundName) + '：' + esc(m.n1) + ' vs ' + esc(m.n2) + '</li>';
+      }).join('') + '</ul>',
+      buttons: [{ label: 'やめる', value: false, cls: 'ghost' }, { label: '試合中にする', value: true, cls: 'accent' }],
+    }).then(function (ok) {
+      if (!ok) return;
+      busy(true);
+      call('apiStartTMatches', S.tid, ids, S.entryCode).then(function (res) {
+        busy(false);
+        S.tour = decorateTour(res.tour);
+        S.tsel = {};
+        keepScroll(render);
+        toast(res.started.length + '試合を「試合中」にしました' + (res.skipped.length ? '（' + res.skipped.length + '試合は既に変更済みのため対象外）' : ''));
+      }).catch(function (e) { busy(false); showError(e); });
+    });
+  }
 
   function openBracket(type, focus) {
     var p = { type: type, focus: focus || null };

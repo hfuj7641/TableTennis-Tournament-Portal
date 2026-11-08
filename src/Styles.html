@@ -306,6 +306,12 @@
   .playmark { margin-left: auto; font-size: 10px; font-weight: 800; color: #fff; background: #f59f00; border-radius: 999px; padding: 1px 7px; }
   @keyframes blink { 50% { opacity: 0.45; } }
   .callhint { color: var(--primary-dark); margin-top: 4px; font-weight: 700; }
+  .tbl[role="button"] { cursor: pointer; }
+  .tbl.selected { box-shadow: 0 0 0 3px var(--primary) inset, var(--shadow); background: #d9e8ff; }
+  .tchk { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; flex: none; border: 2px solid var(--primary); border-radius: 6px; background: #fff; color: #fff; font-size: 15px; font-weight: 900; margin-right: 2px; cursor: pointer; }
+  .tchk.on { background: var(--primary); }
+  .bulkbar { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 6px; }
+  .bulkbar .btn.accent { flex: 1; min-width: 220px; }
   .board-none { padding: 4px 4px 0; }
   .prog { display: flex; gap: 8px; }
   .prog button { flex: 1; min-height: 46px; border: 2px solid var(--line); background: #fff; border-radius: 12px; font-weight: 800; color: var(--muted); }

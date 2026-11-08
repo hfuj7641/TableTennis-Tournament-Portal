@@ -769,6 +769,45 @@ function apiSaveTMatch(tid, p) {
   }
 }
 
+/**
+ * 呼び出し中の試合をまとめて「試合中」にする。
+ * ids: 試合IDの配列。まだ「呼び出し中」（未実施・台あり）の試合だけを移し、それ以外は飛ばす。
+ */
+function apiStartTMatches(tid, ids, code) {
+  useTournament_(tid);
+  const settings = checkEntryCode_(code);
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(25000)) throw new Error('ただいま混み合っています。少し待ってからもう一度お試しください。');
+  try {
+    const want = {};
+    (ids || []).forEach(function (id) { want[String(id)] = true; });
+    const ms = readTMatches_();
+    const started = [], skipped = [];
+    ms.forEach(function (m) {
+      if (!want[m.id]) return;
+      if (m.status === TSTATUS.NONE && m.p1 && m.p2 && !m.wo && m.table) {
+        m.status = TSTATUS.PROGRESS;
+        m.sets = []; m.c1 = 0; m.c2 = 0;
+        m.ver = (m.ver || 0) + 1;
+        m.updatedAt = new Date();
+        started.push(m.id);
+      } else {
+        skipped.push(m.id);
+      }
+    });
+    if (started.length) {
+      assignTables_(ms, settings.tableCount);
+      writeTMatches_(ms);
+    }
+    const snap = buildSnapshot_({ settings: settings, tmatches: ms });
+    putSnapshotCache_(snap);
+    SpreadsheetApp.flush();
+    return JSON.stringify({ ok: true, started: started, skipped: skipped, tour: snap.tour });
+  } finally {
+    lock.releaseLock();
+  }
+}
+
 function apiGetBracket(tid) {
   useTournament_(tid);
   return getTourJson_();
