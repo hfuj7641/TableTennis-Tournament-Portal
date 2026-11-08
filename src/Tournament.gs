@@ -8,6 +8,7 @@
  * - 結果を保存すると勝者が次の試合へ進み、空いた台に次の試合が入る
  * - 3位決定戦（準決勝の敗者どうし）。決勝と同じ回戦の pos=1 として持つ
  * - 決勝は台を割り当てない（大会スタッフが個別に案内する）
+ * - 直前に試合を終えた選手が続けて試合にならないよう、休憩中の選手がいない試合を優先して台に入れる
  * - 棄権（参加者シートの「棄権」にチェック）した選手の試合は不戦敗にして、相手を勝ち上がらせる
  */
 
@@ -26,13 +27,13 @@ const TCOL = {
   P1: 4, N1: 5, S1: 6, P2: 7, N2: 8, S2: 9,
   STATUS: 10, BEST_OF: 11, C1: 12, C2: 13, WINNER: 14,
   SET0: 15, // 15..21
-  TABLE: 22, UPDATED: 23, VER: 24, SEQ: 25, WO: 26,
+  TABLE: 22, UPDATED: 23, VER: 24, SEQ: 25, WO: 26, FIN: 27,
 };
 const TOUR_HEADERS = [
   '試合ID', '種別', '回戦', '位置', '選手1番号', '選手1名前', '選手1シード', '選手2番号', '選手2名前', '選手2シード',
   '状態', 'セット数', '選手1獲得セット', '選手2獲得セット', '勝者番号',
   '第1セット', '第2セット', '第3セット', '第4セット', '第5セット', '第6セット', '第7セット',
-  '台', '更新日時', '版', '呼出順', '不戦敗（棄権）',
+  '台', '更新日時', '版', '呼出順', '不戦敗（棄権）', '終了順',
 ];
 
 /* ------------------------------------------------------------------ */
@@ -352,7 +353,7 @@ function assignTables_(ms, T) {
   });
   ms.filter(function (m) { return m.status === TSTATUS.NONE && !m.seq && !isFinal_(ms, m); }).sort(tablePriority_(ms))
     .forEach(function (m) { m.seq = ++maxSeq; });
-  const plan = tableLoad_(ms);
+  const plan = tableLoad_(ms, T);
   const assigned = [];
   for (let t = 1; t <= T; t++) {
     if (busy[t]) continue;
@@ -366,11 +367,25 @@ function assignTables_(ms, T) {
 }
 
 /**
+ * 「休憩中」の選手: 直近に終わった試合（台の数の半分、最低1試合）に出ていた選手。
+ * 不戦勝（棄権）は試合をしていないので数えない。
+ */
+function recentPlayers_(ms, T) {
+  const n = Math.max(1, Math.ceil((Number(T) || 1) / 2));
+  const recent = {};
+  ms.filter(function (m) { return m.status === TSTATUS.DONE && m.fin && !m.wo; })
+    .sort(function (a, b) { return b.fin - a.fin; })
+    .slice(0, n)
+    .forEach(function (m) { if (m.p1) recent[m.p1] = true; if (m.p2) recent[m.p2] = true; });
+  return recent;
+}
+
+/**
  * 上位・下位それぞれの「残り試合数」「台を使っている試合数」「台の空き待ちの試合」。
  * 残り試合数は、終わっていない試合（対戦相手待ちを含む。不戦勝と、台を使わない決勝は除く）。
  */
-function tableLoad_(ms) {
-  const plan = {};
+function tableLoad_(ms, T) {
+  const plan = { recent: recentPlayers_(ms, T) };
   [TTYPE.UPPER, TTYPE.LOWER].forEach(function (type) {
     const list = ms.filter(function (m) { return m.type === type && !isFinal_(ms, m); });
     plan[type] = {
@@ -389,20 +404,28 @@ function tableLoad_(ms) {
  * 同じなら残りの回戦が多い方 → 上位。それぞれの中では呼出順（対戦相手が決まった順）。
  */
 function pickNext_(plan) {
-  let best = null, bestScore = -1;
+  const recent = plan.recent || {};
+  const rested = function (m) { return !recent[m.p1] && !recent[m.p2]; };
+  let best = null, bestScore = -1, bestRested = false, bestIdx = 0;
   [TTYPE.UPPER, TTYPE.LOWER].forEach(function (type) {
     const p = plan[type];
     if (!p.queue.length) return;
+    // 休憩中の選手がいない試合のうち、呼出順の一番早いもの（なければ先頭）
+    let idx = -1;
+    for (let i = 0; i < p.queue.length; i++) if (rested(p.queue[i])) { idx = i; break; }
+    const isRested = idx >= 0;
+    if (!isRested) idx = 0;
     const score = p.remaining / (p.active + 1);
-    const left = p.rounds - p.queue[0].round;
-    if (score > bestScore + 1e-9 || (Math.abs(score - bestScore) < 1e-9 && best && left > plan[best].rounds - plan[best].queue[0].round)) {
-      best = type;
-      bestScore = score;
-    }
+    const left = p.rounds - p.queue[idx].round;
+    const better = best === null ||
+      (isRested && !bestRested) ||
+      (isRested === bestRested && (score > bestScore + 1e-9 ||
+        (Math.abs(score - bestScore) < 1e-9 && left > plan[best].rounds - plan[best].queue[bestIdx].round)));
+    if (better) { best = type; bestScore = score; bestRested = isRested; bestIdx = idx; }
   });
   if (!best) return null;
   plan[best].active++;
-  return plan[best].queue.shift();
+  return plan[best].queue.splice(bestIdx, 1)[0];
 }
 
 function bySeq_(a, b) {
@@ -462,6 +485,7 @@ function tRowToMatch_(r) {
     ver: Number(r[TCOL.VER]) || 0,
     seq: toNum_(r[TCOL.SEQ]) || '',
     wo: toNum_(r[TCOL.WO]) || '',
+    fin: toNum_(r[TCOL.FIN]) || '',
   };
 }
 
@@ -481,6 +505,7 @@ function tMatchToRow_(m) {
   row[TCOL.VER] = m.ver || 0;
   row[TCOL.SEQ] = m.seq || '';
   row[TCOL.WO] = m.wo || '';
+  row[TCOL.FIN] = m.status === TSTATUS.DONE && !m.wo ? (m.fin || '') : '';
   return row;
 }
 
@@ -552,7 +577,7 @@ function buildTourData_(ms, settings, byNum) {
     out.board.push({ table: t, id: m ? m.id : null, extra: t > T });
   }
   // 次の試合の表示順 = 台が空いたときに割り当てる順（同じ配分ルールで予測）
-  const plan = tableLoad_(ms);
+  const plan = tableLoad_(ms, T);
   out.queue = [];
   for (let m = pickNext_(plan); m; m = pickNext_(plan)) out.queue.push(m.id);
   // 対戦相手が決まった決勝（台は個別に案内）
@@ -726,6 +751,13 @@ function apiSaveTMatch(tid, p) {
     if (!m.p1 || !m.p2 || m.status === TSTATUS.BYE) throw new Error('この試合はまだ対戦相手が決まっていません。');
     if (m.wo) throw new Error('この試合は棄権による不戦勝です。取り消す場合は「参加者」シートの「棄権」のチェックを外してください。');
 
+    // 試合ごとのセット数の変更（当日の変更用）
+    if (p.bestOf !== undefined && p.bestOf !== null && Number(p.bestOf) !== m.bestOf) {
+      const nb = Number(p.bestOf);
+      if ([1, 3, 5, 7].indexOf(nb) < 0) throw new Error('セット数は 1 / 3 / 5 / 7 のいずれかにしてください。');
+      m.bestOf = nb;
+    }
+
     let status = TSTATUS.NONE, winner = null, sets = [], c1 = 0, c2 = 0;
     const d = decideResult_(p, m.bestOf);
     if (d.status !== 'none') {
@@ -749,7 +781,14 @@ function apiSaveTMatch(tid, p) {
       retractLoser_(ms, m);
     }
 
+    const wasDone = m.status === TSTATUS.DONE;
     m.status = status; m.winner = winner; m.sets = sets; m.c1 = c1; m.c2 = c2;
+    // 終了順（休憩の判定に使う）。修正の場合は元の終了順のまま
+    if (status === TSTATUS.DONE && !(wasDone && m.fin)) {
+      m.fin = ms.reduce(function (mx, x) { return Math.max(mx, Number(x.fin) || 0); }, 0) + 1;
+    } else if (status !== TSTATUS.DONE) {
+      m.fin = '';
+    }
     m.ver = m.ver + 1;
     m.updatedAt = new Date();
     if (status === TSTATUS.DONE) {
