@@ -91,6 +91,11 @@
 
   /* league grid */
   .league-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; }
+  .league-grid:not(.tour-grid) { grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); align-items: start; }
+  .lplayers { list-style: none; margin: 12px 0 0; padding: 10px 0 0; border-top: 1px solid var(--line); }
+  .lplayers li { display: flex; align-items: center; gap: 8px; font-size: 14px; padding: 2px 0; }
+  .lplayers .num { min-width: 24px; height: 24px; font-size: 12px; border-radius: 7px; flex: none; }
+  .lpn { min-width: 0; overflow-wrap: anywhere; font-weight: 600; }
   .league-card { border: 0; text-align: left; background: var(--card); border-radius: var(--radius); box-shadow: var(--shadow); padding: 14px; }
   .league-card .ln { font-size: 20px; font-weight: 800; }
   .league-card .meta { font-size: 13px; color: var(--muted); margin: 2px 0 10px; }

@@ -364,7 +364,10 @@
         return '<button class="league-card" data-act="open-league" data-league="' + L.no + '">' +
           '<div class="ln">リーグ ' + L.no + '</div>' +
           '<div class="meta">' + L.count + '名 ・ ' + L.done + '/' + L.total + '試合 ' + st + '</div>' +
-          '<div class="bar"><i style="width:' + pct + '%"></i></div></button>';
+          '<div class="bar"><i style="width:' + pct + '%"></i></div>' +
+          '<ul class="lplayers">' + b.players.filter(function (p) { return p.league === L.no; }).map(function (p) {
+            return '<li><span class="num">' + p.num + '</span><span class="lpn">' + esc(p.name) + (p.team ? '<span class="team">（' + esc(p.team) + '）</span>' : '') + '</span></li>';
+          }).join('') + '</ul></button>';
       }).join('') + '</div>';
     } else {
       html += '<input class="search" id="search" type="search" placeholder="名前・所属・くじ番号で検索" value="' + esc(S.search) + '" autocomplete="off">' +
