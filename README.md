@@ -153,7 +153,8 @@ Google スプレッドシートで参加者・試合結果を管理し、Web ペ
 - ウェブアプリの URL を変えないこと（更新は「デプロイを管理 → 編集 → 新バージョン」。「新しいデプロイ」を作ると URL が変わるので、その場合は Worker の `GAS_URL` も変更）
 
 ### 手順（ダッシュボードで作る場合）
-1. Cloudflare のダッシュボード →「Workers & Pages」→「作成」→「Worker を作成」（名前は例: `tabletennis-portal`）→「デプロイ」
+1. Cloudflare のダッシュボード →「Workers & Pages」→「作成」→「**Start with Hello World!**」を選び、名前（例: `tabletennis-portal`）を入れて「デプロイ」
+   - 「Upload and deploy」（ファイルをドラッグ＆ドロップする画面）は静的ファイル用なので使わない。`worker.js` や `wrangler.toml` はアップロードしない
 2. 「コードを編集」で、`cloudflare/worker.js` の中身をすべて貼り付けて「デプロイ」
 3. 「設定 → 変数とシークレット」で次を追加（`GAS_URL` は管理画面「大会の作成・管理」の「公開URL」欄の下に表示される Apps Script の URL）
    - `GAS_URL` … `https://script.google.com/macros/s/…/exec`
