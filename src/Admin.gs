@@ -21,8 +21,8 @@ function adminGetData(tid, pw, autoAdded) {
   useTournament_(tid);
   const settings = checkAdmin_(pw);
   if (!autoAdded) autoAdded = autoAssignLatePlayers_().added;
-  ensureWithdrawColumn_();
-  ensureGradeColumn_();
+  // 列を追加したら表示データを作り直す
+  if (ensureWithdrawColumn_() | ensureGradeColumn_()) clearCache_();
   syncWithdrawals_();
   const players = readPlayers_();
   const leagueRows = readLeagueRows_();

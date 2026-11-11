@@ -99,13 +99,28 @@ function buildSnapshot_(opt) {
   };
 }
 
+/**
+ * キャッシュの値には、作ったときのアプリのバージョンを先頭に付けておく。
+ * 新しいバージョンをデプロイしたら、古いバージョンで作った表示データは使わない。
+ */
+function cacheWrap_(json) {
+  return APP_VERSION + '\n' + json;
+}
+
+function cacheGet_(key) {
+  const v = CacheService.getScriptCache().get(key);
+  if (!v) return null;
+  const head = APP_VERSION + '\n';
+  return v.indexOf(head) === 0 ? v.slice(head.length) : null;
+}
+
 function putSnapshotCache_(snap) {
   const cache = CacheService.getScriptCache();
   const items = {};
-  items[ck_(CACHE_KEY_BOOT)] = JSON.stringify(snap.boot);
-  items[ck_(CACHE_KEY_TOUR)] = JSON.stringify(snap.tour);
+  items[ck_(CACHE_KEY_BOOT)] = cacheWrap_(JSON.stringify(snap.boot));
+  items[ck_(CACHE_KEY_TOUR)] = cacheWrap_(JSON.stringify(snap.tour));
   snap.leagueList.forEach(function (no) {
-    items[ck_(CACHE_KEY_LEAGUE + no)] = JSON.stringify(snap.leagues[no]);
+    items[ck_(CACHE_KEY_LEAGUE + no)] = cacheWrap_(JSON.stringify(snap.leagues[no]));
   });
   try {
     cache.putAll(items, CACHE_TTL);
@@ -152,7 +167,7 @@ function buildFreshSnapshot_() {
 }
 
 function getBootJson_() {
-  const cached = CacheService.getScriptCache().get(ck_(CACHE_KEY_BOOT));
+  const cached = cacheGet_(ck_(CACHE_KEY_BOOT));
   if (cached) return cached;
   const snap = buildFreshSnapshot_();
   putSnapshotCache_(snap);
@@ -161,7 +176,7 @@ function getBootJson_() {
 
 /** トーナメントのデータ（JSON 文字列） */
 function getTourJson_() {
-  const cached = CacheService.getScriptCache().get(ck_(CACHE_KEY_TOUR));
+  const cached = cacheGet_(ck_(CACHE_KEY_TOUR));
   if (cached) return cached;
   const snap = buildFreshSnapshot_();
   putSnapshotCache_(snap);
@@ -171,7 +186,7 @@ function getTourJson_() {
 /** リーグのデータ（JSON 文字列） */
 function getLeagueJson_(no) {
   no = Number(no);
-  const cached = CacheService.getScriptCache().get(ck_(CACHE_KEY_LEAGUE + no));
+  const cached = cacheGet_(ck_(CACHE_KEY_LEAGUE + no));
   if (cached) return cached;
   const snap = buildFreshSnapshot_();
   putSnapshotCache_(snap);

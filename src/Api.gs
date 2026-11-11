@@ -32,11 +32,11 @@ function apiGetParticipants(tid) {
   useTournament_(tid);
   const key = ck_('participants_v1');
   const cache = CacheService.getScriptCache();
-  const cached = cache.get(key);
+  const cached = cacheGet_(key);
   if (cached) return cached;
   const list = readPlayers_().map(function (p) { return { name: p.name, team: p.team, withdrawn: !!p.withdrawn }; });
   const json = JSON.stringify({ players: list, generatedAt: Utilities.formatDate(new Date(), 'Asia/Tokyo', 'HH:mm:ss') });
-  try { cache.put(key, json, CACHE_TTL); } catch (err) { /* 大きすぎる場合はキャッシュしない */ }
+  try { cache.put(key, cacheWrap_(json), CACHE_TTL); } catch (err) { /* 大きすぎる場合はキャッシュしない */ }
   return json;
 }
 
