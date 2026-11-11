@@ -18,7 +18,7 @@ const STATUS = {
 };
 
 /** 画面の下に表示するバージョン（デプロイが更新されているかの確認用） */
-const APP_VERSION = '4.0（開催ステータス・参加者リスト・ルール）';
+const APP_VERSION = '4.1（独自ドメイン対応）';
 
 /** 1試合で記録できる最大セット数（7セットマッチまで対応） */
 const MAX_SETS = 7;
@@ -62,7 +62,9 @@ function doGet() {
   return t
     .evaluate()
     .setTitle(title)
-    .addMetaTag('viewport', 'width=device-width, initial-scale=1, viewport-fit=cover');
+    .addMetaTag('viewport', 'width=device-width, initial-scale=1, viewport-fit=cover')
+    // 独自ドメインのページ（Cloudflare Worker）に埋め込んで表示できるようにする
+    .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
 }
 
 /**

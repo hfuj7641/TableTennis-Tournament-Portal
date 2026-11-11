@@ -142,6 +142,36 @@ Google スプレッドシートで参加者・試合結果を管理し、Web ペ
 
 大会を作成したら、その大会の管理者メニューの「その他 → テスト用サンプル選手を追加」で、参加・支払済み・くじ番号付きの選手が 18 名追加されます。その後「リーグ戦作成」を押すと、リーグと試合が作成されます。
 
+## 独自ドメインで公開する（Cloudflare Worker）
+
+独自ドメイン（例: `https://portal.example.com/`）にアクセスすると、Apps Script のウェブアプリを全画面で埋め込んだページを返す方式です。アドレスバーは独自ドメインのまま、結果の入力などはこれまでどおり動きます。
+
+> Google のサーバーを中継（リバースプロキシ）する方式は、結果の保存が動かなくなりやすいため使いません。
+
+### 準備
+- 独自ドメインの DNS を Cloudflare で管理していること
+- ウェブアプリの URL を変えないこと（更新は「デプロイを管理 → 編集 → 新バージョン」。「新しいデプロイ」を作ると URL が変わるので、その場合は Worker の `GAS_URL` も変更）
+
+### 手順（ダッシュボードで作る場合）
+1. Cloudflare のダッシュボード →「Workers & Pages」→「作成」→「Worker を作成」（名前は例: `tabletennis-portal`）→「デプロイ」
+2. 「コードを編集」で、`cloudflare/worker.js` の中身をすべて貼り付けて「デプロイ」
+3. 「設定 → 変数とシークレット」で次を追加（`GAS_URL` は管理画面「大会の作成・管理」の「公開URL」欄の下に表示される Apps Script の URL）
+   - `GAS_URL` … `https://script.google.com/macros/s/…/exec`
+   - `SITE_TITLE` … ページのタイトル（LINE などで共有したときのタイトルにもなる）
+   - `SITE_DESC`（任意）… 共有時の説明文 / `OG_IMAGE`（任意）… 共有時の画像の URL
+4. 「設定 → ドメインとルート → 追加 → カスタムドメイン」で `portal.example.com` などを追加
+5. Web の「大会の作成・管理（システム管理者）」→「公開URL（独自ドメイン）」に `https://portal.example.com/` を入力して保存
+   - 各大会の「🔗 リンク」「この大会の直接リンクをコピー」が `https://portal.example.com/?t=大会ID` になります
+
+コマンドで公開する場合は `cloudflare/wrangler.toml` の値を書き換えて `cd cloudflare && npx wrangler deploy` を実行します。
+
+### 公開後の確認
+スマホ（iPhone の Safari / Android の Chrome）とパソコンで、`https://独自ドメイン/` と `https://独自ドメイン/?t=大会ID` を開き、大会の表示・結果の保存・リンクのコピーができることを確認してください。
+
+### 制限
+- 個人の Google アカウントで作ったウェブアプリでは、上部の「このアプリケーションは Google Apps Script のユーザーによって作成されたものです」という表示は消せません
+- 大会の指定は `?t=大会ID` で行います（`/大会名` のようなパスは使いません）
+
 ## 当日の流れ
 
 1. 受付で「参加者」シートの **参加確認**・**支払確認** にチェック、くじを引いてもらい **くじ番号** を記入
@@ -181,6 +211,9 @@ src/
   Api.gs            Web 画面から呼ぶ関数（取得・結果保存）
   Admin.gs          管理者機能（設定保存・くじ番号割当・リーグ作成・選手追加・トーナメント作成）
   Tournament.gs     トーナメント（シード決定・組み合わせ・勝ち上がり・台の割り当て・結果保存）
+cloudflare/
+  worker.js         独自ドメイン用の Cloudflare Worker（ウェブアプリを全画面で埋め込むページを返す）
+  wrangler.toml     Worker の設定（コマンドで公開する場合）
   Index.html        ページの骨組み
   Styles.html       CSS
   App.html          画面の JavaScript（シングルページ）

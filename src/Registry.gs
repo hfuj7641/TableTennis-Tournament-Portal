@@ -10,6 +10,7 @@
 
 const PROP_TOURNAMENTS = 'TOURNAMENTS';
 const PROP_MASTER = 'MASTER_PASSWORD';
+const PROP_PUBLIC_URL = 'PUBLIC_URL'; // 独自ドメインの公開URL（例: https://portal.example.com/）
 
 /** 現在のリクエストで扱っている大会 */
 const CTX = { tid: null, ssId: null, ss: null };
@@ -63,12 +64,34 @@ function updateTournament_(tid, patch) {
   }
 }
 
-function webAppUrl_() {
+/** Apps Script のウェブアプリの URL */
+function gasUrl_() {
   try {
     return ScriptApp.getService().getUrl() || '';
   } catch (err) {
     return '';
   }
+}
+
+/** 共有用の URL（公開URL＝独自ドメインが設定されていればそちら） */
+function webAppUrl_() {
+  const pub = props_().getProperty(PROP_PUBLIC_URL);
+  return pub || gasUrl_();
+}
+
+/** 公開URL（独自ドメイン）を設定する。空なら Apps Script の URL に戻す */
+function sysSetPublicUrl(pw, url) {
+  checkMaster_(pw);
+  url = String(url || '').trim();
+  if (url) {
+    if (!/^https:\/\/[^\s/?#]+\.[^\s/?#]+/.test(url)) throw new Error('公開URLは https:// から始まるURLで入力してください（例: https://portal.example.com/）。');
+    url = url.replace(/[?#].*$/, '');
+    if (!/\/$/.test(url)) url += '/';
+    props_().setProperty(PROP_PUBLIC_URL, url);
+  } else {
+    props_().deleteProperty(PROP_PUBLIC_URL);
+  }
+  return sysGetData(pw);
 }
 
 function publicTournament_(t) {
@@ -135,7 +158,7 @@ function sysGetData(pw) {
     };
   });
   list.sort(function (a, b) { return String(b.date).localeCompare(String(a.date)); });
-  return JSON.stringify({ tournaments: list });
+  return JSON.stringify({ tournaments: list, publicUrl: props_().getProperty(PROP_PUBLIC_URL) || '', gasUrl: gasUrl_() });
 }
 
 function sysChangePassword(pw, next) {

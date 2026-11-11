@@ -1,0 +1,18 @@
+# 卓球大会ポータル - 独自ドメイン用 Cloudflare Worker の設定
+# コマンドで公開する場合:  cd cloudflare && npx wrangler deploy
+# （ダッシュボードで作る場合は、このファイルは不要です。worker.js の中身を貼り付けてください）
+
+name = "tabletennis-portal"
+main = "worker.js"
+compatibility_date = "2024-09-23"
+
+[vars]
+GAS_URL = "https://script.google.com/macros/s/AKfycbw8GYM-5psJbPkUbT-iPN7x2L-E76JqAHlGUSY7R6P6uVG8zaMRpfe42PumgcL6ZYE5dg/exec"
+SITE_TITLE = "卓球大会ポータル"
+SITE_DESC = "卓球大会のリーグ戦・トーナメントの試合結果ポータル"
+# OG_IMAGE = "https://example.com/og.png"
+
+# 独自ドメインの割り当て（ドメインの DNS が Cloudflare にある場合）
+# routes = [
+#   { pattern = "portal.example.com", custom_domain = true }
+# ]

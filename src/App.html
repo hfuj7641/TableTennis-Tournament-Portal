@@ -1330,6 +1330,11 @@
         '<button class="btn danger" data-act="sys-remove" data-tid="' + esc(t.id) + '">一覧から削除</button>' +
         '</div></div>';
     });
+    html += '<div class="section-title">公開URL（独自ドメイン）</div><div class="card" id="pub-form">' +
+      '<div class="form-row"><label>公開URL</label><input name="publicUrl" placeholder="https://portal.example.com/" value="' + esc(D.publicUrl || '') + '" autocomplete="off" inputmode="url">' +
+      '<div class="hint">Cloudflare Worker などで独自ドメインに埋め込んで公開している場合に入力します。各大会の「🔗 リンク」が、このURLのリンク（…/?t=大会ID）になります。空欄にすると Apps Script のURLに戻ります。</div></div>' +
+      (D.gasUrl ? '<div class="small muted" style="margin-bottom:10px;word-break:break-all">Apps Script のURL（Worker に設定するURL）:<br>' + esc(D.gasUrl) + '</div>' : '') +
+      '<button class="btn primary" data-act="sys-pub">公開URLを保存</button></div>';
     html += '<div class="section-title">その他</div><div class="card"><button class="btn ghost" data-act="sys-pw">システム管理者パスワードを変更</button></div>';
     html += '</div>';
     app.innerHTML = html;
@@ -1385,6 +1390,10 @@
         if (!ok) return;
         sysCall('sysRemoveTournament', tid).then(function () { render(); loadTournaments(true).catch(function () {}); }).catch(function () {});
       });
+    }
+    if (act === 'sys-pub') {
+      var pu = document.querySelector('#pub-form [name=publicUrl]').value.trim();
+      return sysCall('sysSetPublicUrl', pu).then(function () { render(); toast(pu ? '公開URLを保存しました' : '公開URLを解除しました'); }).catch(function () {});
     }
     if (act === 'sys-pw') {
       return modal({
