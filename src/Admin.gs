@@ -22,6 +22,7 @@ function adminGetData(tid, pw, autoAdded) {
   const settings = checkAdmin_(pw);
   if (!autoAdded) autoAdded = autoAssignLatePlayers_().added;
   ensureWithdrawColumn_();
+  ensureGradeColumn_();
   syncWithdrawals_();
   const players = readPlayers_();
   const leagueRows = readLeagueRows_();

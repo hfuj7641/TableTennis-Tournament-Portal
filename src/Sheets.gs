@@ -19,7 +19,7 @@ const SETTING_DEFS = [
   { key: 'entryCode', label: '選手入力パスコード', def: '', type: 'string', desc: '空欄なら不要。設定すると「選手用」に入るときに入力を求めます' },
 ];
 
-const PLAYER_HEADERS = ['名前', '所属', '参加確認', '支払確認', 'くじ番号', 'リーグ', '備考', '棄権'];
+const PLAYER_HEADERS = ['名前', '所属', '学年', '参加確認', '支払確認', 'くじ番号', 'リーグ', '備考', '棄権'];
 const LEAGUE_HEADERS = ['リーグ', 'くじ番号', '名前', '所属'];
 const STANDING_HEADERS = ['リーグ', '順位', 'くじ番号', '名前', '所属', '試合数', '勝', '敗', '勝率', '獲得セット', '失セット', 'セット率', '得点', '失点', '進出先', '状態'];
 
@@ -78,6 +78,7 @@ function setupSheets_() {
   sh.getRange(2, pc.attend + 1, 500, 1).setDataValidation(rule);
   sh.getRange(2, pc.paid + 1, 500, 1).setDataValidation(rule);
   ensureWithdrawColumn_();
+  ensureGradeColumn_();
 
   // リーグ（システムが書き込む）
   sh = ss.getSheetByName(SHEET.LEAGUES) || ss.insertSheet(SHEET.LEAGUES);
@@ -120,6 +121,7 @@ function addSamplePlayers_(n) {
     const row = new Array(width).fill('');
     row[pc.name] = last[i % last.length] + ' ' + first[(i * 3) % first.length];
     row[pc.team] = teams[i % teams.length];
+    if (pc.grade >= 0) row[pc.grade] = (i % 3) + 1;
     row[pc.attend] = true;
     row[pc.paid] = true;
     row[pc.num] = nums[i];
@@ -221,6 +223,7 @@ function playerColumns_(sh) {
   const c = {
     name: find(['名前', '氏名', '選手名']),
     team: find(['所属', 'チーム', 'クラブ']),
+    grade: find(['学年']),
     attend: find(['参加確認', '参加']),
     paid: find(['支払確認', '支払', '支払い確認']),
     num: find(['くじ番号', '番号', 'くじ']),
@@ -263,7 +266,10 @@ function readPlayers_() {
     out.push({
       row: i + 1,
       name: name,
-      team: c.team >= 0 ? String(r[c.team] == null ? '' : r[c.team]).trim() : '',
+      // 表示用の所属は「所属・学年」（例: A中学・2年）。名前の表示はすべて「名前（所属・学年）」になる
+      team: teamLabel_(c.team >= 0 ? r[c.team] : '', c.grade >= 0 ? r[c.grade] : ''),
+      teamRaw: c.team >= 0 ? String(r[c.team] == null ? '' : r[c.team]).trim() : '',
+      grade: c.grade >= 0 ? gradeLabel_(r[c.grade]) : '',
       attend: truthy_(r[c.attend]),
       withdrawn: c.withdrawn >= 0 ? truthy_(r[c.withdrawn]) : false,
       paid: truthy_(r[c.paid]),
@@ -279,6 +285,30 @@ function readPlayers_() {
  * 「参加者」シートに「棄権」列（チェックボックス）が無ければ追加する。
  * 途中で帰った選手にチェックを入れると、トーナメントの試合が不戦敗になる。
  */
+/** 学年の表示（数字だけなら「2年」のように「年」を付ける。全角数字も可） */
+function gradeLabel_(v) {
+  const s = String(v == null ? '' : v).trim().replace(/[０-９]/g, function (c) { return String.fromCharCode(c.charCodeAt(0) - 0xfee0); });
+  if (!s) return '';
+  return /^\d+$/.test(s) ? s + '年' : s;
+}
+
+/** 表示用の所属: 「所属・学年」 */
+function teamLabel_(team, grade) {
+  const t = String(team == null ? '' : team).trim();
+  const g = gradeLabel_(grade);
+  return t && g ? t + '・' + g : t || g;
+}
+
+/** 「参加者」シートに「学年」列が無ければ追加する（列の位置は自由に移動してよい） */
+function ensureGradeColumn_() {
+  const sh = sheet_(SHEET.PLAYERS);
+  const c = playerColumns_(sh);
+  if (c.grade >= 0) return false;
+  const col = Math.max(sh.getLastColumn(), 1) + 1;
+  sh.getRange(1, col).setValue('学年').setFontWeight('bold').setBackground('#e8eef7');
+  return true;
+}
+
 function ensureWithdrawColumn_() {
   const sh = sheet_(SHEET.PLAYERS);
   const c = playerColumns_(sh);
