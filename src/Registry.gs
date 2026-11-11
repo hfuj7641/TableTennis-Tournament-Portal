@@ -72,7 +72,7 @@ function webAppUrl_() {
 }
 
 function publicTournament_(t) {
-  return { id: t.id, name: t.name, date: t.date || '', hidden: !!t.hidden };
+  return { id: t.id, name: t.name, date: t.date || '', hidden: !!t.hidden, status: t.status || '開催中' };
 }
 
 /* ------------------------------------------------------------------ */
@@ -129,7 +129,7 @@ function sysGetData(pw) {
   const url = webAppUrl_();
   const list = listTournaments_().map(function (t) {
     return {
-      id: t.id, name: t.name, date: t.date || '', hidden: !!t.hidden, createdAt: t.createdAt || '',
+      id: t.id, name: t.name, date: t.date || '', hidden: !!t.hidden, status: t.status || '開催中', createdAt: t.createdAt || '',
       ssUrl: 'https://docs.google.com/spreadsheets/d/' + t.ssId + '/edit',
       link: url ? url + '?t=' + t.id : '',
     };
@@ -184,6 +184,7 @@ function sysCreateTournament(pw, input) {
     ssId: ss.getId(),
     createdAt: Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy/MM/dd HH:mm'),
     hidden: false,
+    status: '開催前',
   };
 
   CTX.tid = t.id;
@@ -193,7 +194,7 @@ function sysCreateTournament(pw, input) {
   // 新規作成時に自動で作られる「シート1」を削除
   const first = ss.getSheetByName('シート1') || ss.getSheetByName('Sheet1');
   if (first && ss.getSheets().length > 1 && first.getLastRow() === 0) ss.deleteSheet(first);
-  saveSettings_({ title: name, adminPassword: adminPassword });
+  saveSettings_({ title: name, adminPassword: adminPassword, status: '開催前' }); // 新しい大会は「開催前」から
   installEditTrigger_(ss);
 
   const lock = LockService.getScriptLock();

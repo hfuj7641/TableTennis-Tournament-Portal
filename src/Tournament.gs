@@ -849,5 +849,6 @@ function apiStartTMatches(tid, ids, code) {
 
 function apiGetBracket(tid) {
   useTournament_(tid);
+  requireOpened_();
   return getTourJson_();
 }

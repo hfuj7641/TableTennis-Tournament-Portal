@@ -274,6 +274,9 @@
     if (v === 'sys') return renderSys();
     if (!S.tid) return renderTournamentList();
     if (v === 'home') return renderHome();
+    if (v === 'participants') return renderParticipants();
+    if (v === 'rules') return renderRules();
+    if (tourStatus() === '開催前' && v !== 'admin' && v !== 'tpreview') { S.view = 'home'; return renderHome(); }
     if (v === 'select') return renderSelect();
     if (v === 'league') return withLeague(renderLeague);
     if (v === 'standings') return withLeague(renderStandings);
@@ -296,20 +299,100 @@
 
   /* ----- home ----- */
 
+  function tourStatus() { return (S.boot && S.boot.status) || '開催中'; }
+
+  function statusChip(st) {
+    var cls = st === '開催前' ? 'pre' : st === '終了' ? 'ended' : 'open';
+    return '<span class="stchip ' + cls + '">' + esc(st) + '</span>';
+  }
+
   function renderHome() {
     var title = (S.boot && S.boot.title) || (S.tournament && S.tournament.name) || '卓球大会';
-    app.innerHTML = topbar('', 'tlist') +
+    var st = tourStatus();
+    var html = topbar('', 'tlist') +
       '<div class="home" style="padding-top:24px">' +
       '<div class="hero-ball">🏓</div>' +
       '<h1>' + esc(title) + '</h1>' +
-      '<p class="sub">' + (S.tournament && S.tournament.date ? esc(S.tournament.date) + ' ・ ' : '') + (S.boot && S.boot.hasTournament ? 'リーグ戦・トーナメント' : 'リーグ戦') + ' 試合結果ポータル</p>' +
-      '<button class="big-btn player" data-act="mode" data-mode="player"><span class="ico">✍️</span><span><b>選手用（試合結果の入力）</b><small>自分の試合の結果を入力・修正できます</small></span></button>' +
-      '<button class="big-btn viewer" data-act="mode" data-mode="viewer"><span class="ico">👀</span><span><b>結果確認用（保護者・観覧）</b><small>試合結果と順位を見ることができます（閲覧のみ）</small></span></button>' +
-      '<button class="admin-link" data-act="admin">この大会の管理者メニュー</button>' +
-      '</div>';
+      '<p class="sub">' + (S.tournament && S.tournament.date ? esc(S.tournament.date) + ' ・ ' : '') + statusChip(st) + '</p>';
+    var info = '<div class="home-sub"><button class="mid-btn" data-act="participants">👥 参加者リスト</button><button class="mid-btn" data-act="rules">📖 ルール</button></div>';
+    if (st === '開催前') {
+      html += '<div class="notice info" style="text-align:left;margin-bottom:20px">この大会は<b>開催前</b>です。参加者リストとルールを確認できます。<br>試合の結果入力・閲覧は、大会当日に公開されます。</div>' +
+        '<button class="big-btn viewer" data-act="participants"><span class="ico">👥</span><span><b>参加者リスト</b><small>参加予定の選手と所属を確認できます</small></span></button>' +
+        '<button class="big-btn viewer" data-act="rules"><span class="ico">📖</span><span><b>ルール</b><small>大会のルール・注意事項</small></span></button>';
+    } else if (st === '終了') {
+      html += '<div class="notice info" style="text-align:left;margin-bottom:20px">この大会は<b>終了</b>しました。試合結果と順位を閲覧できます（結果の入力はできません）。</div>' +
+        '<button class="big-btn viewer" data-act="mode" data-mode="viewer"><span class="ico">👀</span><span><b>結果を見る</b><small>試合結果・順位・トーナメント表</small></span></button>' + info;
+    } else {
+      html += '<p class="sub" style="margin-top:-20px">' + (S.boot && S.boot.hasTournament ? 'リーグ戦・トーナメント' : 'リーグ戦') + ' 試合結果ポータル</p>' +
+        '<button class="big-btn player" data-act="mode" data-mode="player"><span class="ico">✍️</span><span><b>選手用（試合結果の入力）</b><small>自分の試合の結果を入力・修正できます</small></span></button>' +
+        '<button class="big-btn viewer" data-act="mode" data-mode="viewer"><span class="ico">👀</span><span><b>結果確認用（保護者・観覧）</b><small>試合結果と順位を見ることができます（閲覧のみ）</small></span></button>' + info;
+    }
+    html += '<button class="admin-link" data-act="admin">この大会の管理者メニュー</button></div>';
+    app.innerHTML = html;
+  }
+
+  /* ----- 参加者リスト ----- */
+
+  function renderParticipants() {
+    var P = S.participants;
+    var html = topbar('参加者リスト', 'home') + '<div class="wrap">';
+    if (!P) {
+      app.innerHTML = html + '<div class="loading"><div class="spinner"></div>読み込み中…</div></div>';
+      call('apiGetParticipants', S.tid).then(function (r) { S.participants = r; if (S.view === 'participants') render(); }).catch(showError);
+      return;
+    }
+    var q = (S.psearch || '').trim().toLowerCase();
+    html += '<div class="summary"><span class="small">登録 <b>' + P.players.length + '</b> 名</span><span style="flex:1"></span>' +
+      '<button class="icon-btn" data-act="part-reload" title="更新">🔄</button></div>' +
+      '<input class="search" id="psearch" type="search" placeholder="名前・所属で検索" value="' + esc(S.psearch || '') + '" autocomplete="off" style="margin-top:12px">' +
+      '<div class="name-list" id="plist">' + participantsListHtml(P, q) + '</div>' +
+      '<p class="small muted" style="text-align:center;margin-top:16px">最終更新 ' + esc(P.generatedAt || '') + '</p></div>';
+    app.innerHTML = html;
+  }
+
+  function participantsListHtml(P, q) {
+    var list = P.players.map(function (p, i) { return { no: i + 1, p: p }; }).filter(function (x) {
+      return !q || (x.p.name + ' ' + (x.p.team || '')).toLowerCase().indexOf(q) >= 0 || String(x.p.name).replace(/\s/g, '').toLowerCase().indexOf(q.replace(/\s/g, '')) >= 0;
+    });
+    if (!list.length) return '<div class="empty">' + (P.players.length ? '該当する選手がいません' : 'まだ参加者が登録されていません') + '</div>';
+    return list.map(function (x) {
+      var label = esc(x.p.name) + (x.p.team ? '<span class="team">（' + esc(x.p.team) + '）</span>' : '');
+      return '<div class="name-item"><span class="num">' + x.no + '</span><span class="nm">' +
+        (x.p.withdrawn ? '<span class="badge wdb">棄権</span> <span class="wd">' + label + '</span>' : label) + '</span></div>';
+    }).join('');
+  }
+
+  /* ----- ルール ----- */
+
+  /** ルールの文章を表示用 HTML に（# 見出し、- / ・ 箇条書き、空行で段落） */
+  function rulesHtml(text) {
+    var lines = String(text || '').replace(/\r/g, '').split('\n');
+    var html = '', inList = false;
+    var close = function () { if (inList) { html += '</ul>'; inList = false; } };
+    lines.forEach(function (line) {
+      var t = line.trim();
+      if (!t) { close(); return; }
+      var h = t.match(/^#{1,3}\s*(.+)$/);
+      var li = t.match(/^(?:[-・*●]\s*)(.+)$/);
+      if (h) { close(); html += '<h3>' + esc(h[1]) + '</h3>'; }
+      else if (li) { if (!inList) { html += '<ul>'; inList = true; } html += '<li>' + esc(li[1]) + '</li>'; }
+      else { close(); html += '<p>' + esc(t) + '</p>'; }
+    });
+    close();
+    return html;
+  }
+
+  function renderRules() {
+    var text = S.boot && S.boot.rules;
+    app.innerHTML = topbar('ルール', 'home') + '<div class="wrap">' +
+      (text ? '<div class="card rules" style="margin-top:16px">' + rulesHtml(text) + '</div>'
+        : '<div class="card empty" style="margin-top:16px">ルールはまだ登録されていません。</div>') + '</div>';
   }
 
   function enterMode(mode) {
+    var st = tourStatus();
+    if (st === '開催前') return alertBox('まだ開催前です', '<p>試合の結果入力・閲覧は、大会当日（開催中）に公開されます。</p>', 'ℹ️');
+    if (st === '終了' && mode === 'player') return alertBox('大会は終了しました', '<p>結果の入力はできません。「結果を見る」から閲覧できます。</p>', 'ℹ️');
     var proceed = function () {
       S.mode = mode;
       go('select', {});
@@ -1141,6 +1224,8 @@
     S.entryCode = store('entryCode:' + t.id) || '';
     S.tour = null;
     S.phase = 'tour';
+    S.participants = null;
+    S.psearch = '';
   }
 
   function openTournament(t) {
@@ -1170,7 +1255,7 @@
     } else {
       html += '<div class="name-list">' + list.map(function (t) {
         return '<button class="name-item" data-act="open-tournament" data-tid="' + esc(t.id) + '">' +
-          '<span style="font-size:24px">🏆</span><span class="nm"><b>' + esc(t.name) + '</b>' + (t.date ? '<small>' + esc(t.date) + '</small>' : '') + '</span>' +
+          '<span style="font-size:24px">🏆</span><span class="nm"><b>' + esc(t.name) + '</b> ' + statusChip(t.status || '開催中') + (t.date ? '<small>' + esc(t.date) + '</small>' : '') + '</span>' +
           '<span class="lg">開く ›</span></button>';
       }).join('') + '</div>';
     }
@@ -1352,6 +1437,18 @@
     html += '<div class="card" style="margin-top:16px"><b>' + esc(A.tournament.name) + '</b>' + (A.tournament.date ? ' <span class="muted small">' + esc(A.tournament.date) + '</span>' : '') +
       '<div class="row-actions"><a class="btn" href="' + esc(A.ssUrl) + '" target="_blank" rel="noopener">📄 スプレッドシートを開く</a>' +
       (A.link ? '<button class="btn ghost" data-act="copy" data-text="' + esc(A.link) + '">🔗 この大会の直接リンクをコピー</button>' : '') + '</div></div>';
+
+    var cst = s.status || '開催中';
+    var stDesc = { '開催前': '参加者リストとルールのみ公開。試合の入力・閲覧はできません', '開催中': '試合の結果入力・閲覧ができます', '終了': '閲覧のみ。結果の入力はできません' };
+    html += '<div class="section-title">公開ステータス</div><div class="card">' +
+      '<div class="prog stsel">' + ['開催前', '開催中', '終了'].map(function (k) {
+        return '<button class="' + (cst === k ? 'on ' + (k === '開催前' ? 'before' : k === '開催中' ? 'playing' : 'done') : '') + '" data-act="adm-status" data-v="' + k + '">' + k + '</button>';
+      }).join('') + '</div>' +
+      '<p class="small" style="margin:8px 0 0">現在: <b>' + esc(cst) + '</b> … ' + esc(stDesc[cst]) + '</p></div>';
+    html += '<div class="section-title">ルール（開催前から公開）</div><div class="card">' +
+      '<textarea id="adm-rules" class="rules-edit" rows="10" placeholder="例:\n# 試合形式\n- リーグ戦は3セットマッチ（2セット先取）\n- 上位2名が上位トーナメントへ\n# 注意事項\n- 試合結果は選手自身が入力してください">' + esc(s.rules || '') + '</textarea>' +
+      '<div class="small muted" style="margin:6px 0 10px">「# 」で始まる行は見出し、「- 」や「・」で始まる行は箇条書きになります。</div>' +
+      '<div class="row-actions" style="margin-top:0"><button class="btn primary" data-act="adm-rules-save">ルールを保存</button><button class="btn ghost" data-act="adm-rules-preview">表示を確認</button></div></div>';
 
     html += '<div class="section-title">参加者の状況（「参加者」シート）</div><div class="card">' +
       '<div class="stats">' +
@@ -1831,6 +1928,43 @@
       case 'adm-late':
         adminCall('adminAutoAssignLate').then(function (d) { S.admin = d; render(); showAutoAdded(d); }).catch(function () {});
         break;
+      case 'participants':
+        S.participants = null;
+        go('participants', {});
+        break;
+      case 'part-reload':
+        call('apiGetParticipants', S.tid).then(function (r) { S.participants = r; render(); toast('最新の参加者リストに更新しました'); }).catch(showError);
+        break;
+      case 'rules':
+        loadBoot(true).then(function () { if (S.view === 'rules') render(); }).catch(function () {});
+        go('rules', {});
+        break;
+      case 'adm-status': {
+        var nst = el.getAttribute('data-v');
+        if (nst === (S.admin.settings.status || '開催中')) break;
+        var msg = { '開催前': '参加者リストとルールだけが見られる状態にします。試合の入力・閲覧はできなくなります。', '開催中': '試合の結果入力・閲覧ができるようにします（Webサイトを開放します）。', '終了': '結果の入力ができなくなり、閲覧のみになります。' };
+        modal({
+          title: '「' + nst + '」にしますか？', icon: nst === '開催中' ? '🚀' : 'ℹ️',
+          html: '<p>' + esc(msg[nst]) + '</p>',
+          buttons: [{ label: 'やめる', value: false, cls: 'ghost' }, { label: '「' + nst + '」にする', value: true, cls: nst === '開催中' ? 'accent' : 'primary' }],
+        }).then(function (ok) {
+          if (!ok) return;
+          adminCall('adminSetStatus', nst).then(function (d) {
+            S.admin = d; render(); toast('公開ステータスを「' + nst + '」にしました');
+            loadBoot(true).catch(function () {});
+            loadTournaments(true).catch(function () {});
+          }).catch(function () {});
+        });
+        break;
+      }
+      case 'adm-rules-save':
+        adminCall('adminSaveRules', document.getElementById('adm-rules').value).then(function (d) {
+          S.admin = d; render(); toast('ルールを保存しました'); loadBoot(true).catch(function () {});
+        }).catch(function () {});
+        break;
+      case 'adm-rules-preview':
+        modal({ title: 'ルール（表示の確認）', icon: '📖', html: '<div class="rules">' + (rulesHtml(document.getElementById('adm-rules').value) || '<p class="muted">（空です）</p>') + '</div>', buttons: [{ label: '閉じる', value: true, cls: 'primary' }] });
+        break;
       case 'adm-reload':
         adminReload().catch(function () {});
         break;
@@ -1881,6 +2015,11 @@
 
   document.addEventListener('input', function (ev) {
     var t = ev.target;
+    if (t.id === 'psearch' && S.participants) {
+      S.psearch = t.value;
+      document.getElementById('plist').innerHTML = participantsListHtml(S.participants, t.value.trim().toLowerCase());
+      return;
+    }
     if (t.id === 'search') {
       S.search = t.value;
       document.getElementById('name-list').innerHTML = nameListHtml();

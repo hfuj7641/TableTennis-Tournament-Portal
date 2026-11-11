@@ -155,6 +155,28 @@ function adminCreateBrackets(tid, pw, input, force, planId) {
   return JSON.stringify(createBrackets_(s, !!force, planId || null));
 }
 
+/** 開催ステータスを変更する（開催前 / 開催中 / 終了） */
+function adminSetStatus(tid, pw, status) {
+  useTournament_(tid);
+  checkAdmin_(pw);
+  if (TOUR_STATUSES.indexOf(status) < 0) throw new Error('開催ステータスが正しくありません。');
+  saveSettings_({ status: status });
+  updateTournament_(tid, { status: status });
+  clearCache_();
+  return adminGetData(tid, pw);
+}
+
+/** ルールの文章を保存する */
+function adminSaveRules(tid, pw, text) {
+  useTournament_(tid);
+  checkAdmin_(pw);
+  text = String(text == null ? '' : text);
+  if (text.length > 40000) throw new Error('ルールの文章が長すぎます（40,000文字まで）。');
+  saveSettings_({ rules: text });
+  clearCache_();
+  return adminGetData(tid, pw);
+}
+
 function adminExportStandings(tid, pw) {
   useTournament_(tid);
   checkAdmin_(pw);

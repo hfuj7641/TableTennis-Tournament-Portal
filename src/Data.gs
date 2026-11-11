@@ -84,6 +84,8 @@ function buildSnapshot_(opt) {
     leagues: leagues,
     tour: tour,
     boot: {
+      status: settings.status,
+      rules: settings.rules,
       hasTournament: !!tour.exists,
       tour: tour.exists ? { upper: tourSummary(tour.upper), lower: tourSummary(tour.lower), tables: tour.tables } : null,
       title: settings.title,
@@ -114,7 +116,7 @@ function putSnapshotCache_(snap) {
 }
 
 function clearCache_() {
-  const keys = [ck_(CACHE_KEY_BOOT), ck_(CACHE_KEY_TOUR)];
+  const keys = [ck_(CACHE_KEY_BOOT), ck_(CACHE_KEY_TOUR), ck_('participants_v1')];
   for (let i = 1; i <= MAX_LEAGUES_CACHE; i++) keys.push(ck_(CACHE_KEY_LEAGUE + i));
   CacheService.getScriptCache().removeAll(keys);
 }

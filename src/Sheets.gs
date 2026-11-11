@@ -4,6 +4,8 @@
 
 const SETTING_DEFS = [
   { key: 'title', label: '大会名', def: '卓球大会', type: 'string', desc: 'Webページのタイトルに表示されます' },
+  { key: 'status', label: '開催ステータス', def: '開催中', type: 'string', desc: '開催前（参加者リストとルールのみ公開）/ 開催中（試合の入力・閲覧）/ 終了（閲覧のみ）' },
+  { key: 'rules', label: 'ルール', def: '', type: 'string', desc: 'Webの「ルール」に表示する文章（管理者メニューから編集できます）' },
   { key: 'leagueCount', label: 'リーグ戦の数', def: 4, type: 'int', desc: 'リーグ（グループ）の数' },
   { key: 'playersPerLeague', label: '各リーグの標準選手数', def: 4, type: 'int', desc: 'リーグ数の目安計算に使います。人数が割り切れない場合は ±1 名で調整されます' },
   { key: 'leagueSets', label: 'リーグ戦のセット数', def: 3, type: 'sets', desc: '3 = 3セットマッチ（2セット先取）' },
@@ -146,6 +148,7 @@ function getSettings_() {
 
 function normalizeSetting_(d, v) {
   if (d.type === 'bool') return truthy_(v);
+  if (d.key === 'status') { const st = String(v == null ? '' : v).trim(); return TOUR_STATUSES.indexOf(st) >= 0 ? st : '開催中'; }
   if (d.type === 'string') return String(v == null ? '' : v).trim();
   const n = parseInt(String(v == null ? '' : v).replace(/[０-９]/g, function (c) { return String.fromCharCode(c.charCodeAt(0) - 0xfee0); }), 10);
   return isNaN(n) ? d.def : n;
@@ -160,7 +163,17 @@ function validateSettings_(s) {
   ['leagueSets', 'upperSets', 'lowerSets'].forEach(function (k) {
     if ([1, 3, 5, 7].indexOf(s[k]) < 0) errs.push(labelOf_(k) + ' は 1 / 3 / 5 / 7 のいずれかにしてください');
   });
+  if (TOUR_STATUSES.indexOf(s.status) < 0) errs.push('開催ステータスは ' + TOUR_STATUSES.join(' / ') + ' のいずれかにしてください');
   if (errs.length) throw new Error(errs.join('\n'));
+}
+
+/** 大会の開催ステータス */
+const TOUR_STATUSES = ['開催前', '開催中', '終了'];
+
+/** 文字の設定で「=」「+」「-」「@」から始まる値は、数式と解釈されないよう文字列として書き込む */
+function cellValue_(d, v) {
+  if (d.type === 'string' && /^[=+\-@]/.test(String(v))) return "'" + v;
+  return v;
 }
 
 function labelOf_(key) {
@@ -183,9 +196,9 @@ function saveSettings_(input) {
     let row = -1;
     for (let i = 1; i < values.length; i++) if (String(values[i][0]).trim() === d.label) row = i + 1;
     if (row < 0) {
-      sh.appendRow([d.label, next[d.key], d.desc]);
+      sh.appendRow([d.label, cellValue_(d, next[d.key]), d.desc]);
     } else {
-      sh.getRange(row, 2).setValue(next[d.key]);
+      sh.getRange(row, 2).setValue(cellValue_(d, next[d.key]));
     }
   });
   return next;

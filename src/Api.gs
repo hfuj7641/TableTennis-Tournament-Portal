@@ -3,14 +3,41 @@
  * 戻り値はすべて JSON 文字列（キャッシュをそのまま返せるため）。
  */
 
+/**
+ * 大会の基本データ。開催前は試合の情報を返さない（参加者リストとルールのみ公開）。
+ */
 function apiGetBoot(tid) {
   useTournament_(tid);
-  return getBootJson_();
+  const json = getBootJson_();
+  const b = JSON.parse(json);
+  if (b.status !== '開催前') return json;
+  return JSON.stringify({ title: b.title, status: b.status, rules: b.rules, leagues: [], players: [], hasTournament: false, requiresEntryCode: b.requiresEntryCode });
+}
+
+/** 開催前は試合の情報を見せない */
+function requireOpened_() {
+  const b = JSON.parse(getBootJson_());
+  if (b.status === '開催前') throw new Error('大会はまだ開催前です。試合の情報は開催後に公開されます。');
+  return b;
 }
 
 function apiGetLeague(tid, no) {
   useTournament_(tid);
+  requireOpened_();
   return getLeagueJson_(no);
+}
+
+/** 参加者リスト（「参加者」シートの名前と所属。開催前から公開） */
+function apiGetParticipants(tid) {
+  useTournament_(tid);
+  const key = ck_('participants_v1');
+  const cache = CacheService.getScriptCache();
+  const cached = cache.get(key);
+  if (cached) return cached;
+  const list = readPlayers_().map(function (p) { return { name: p.name, team: p.team, withdrawn: !!p.withdrawn }; });
+  const json = JSON.stringify({ players: list, generatedAt: Utilities.formatDate(new Date(), 'Asia/Tokyo', 'HH:mm:ss') });
+  try { cache.put(key, json, CACHE_TTL); } catch (err) { /* 大きすぎる場合はキャッシュしない */ }
+  return json;
 }
 
 function apiVerifyEntryCode(tid, code) {
@@ -21,6 +48,9 @@ function apiVerifyEntryCode(tid, code) {
 
 function checkEntryCode_(code) {
   const s = getSettings_();
+  if (s.status !== '開催中') {
+    throw new Error(s.status === '開催前' ? '大会はまだ開催前のため、結果は入力できません。' : '大会は終了したため、結果は入力できません。');
+  }
   if (s.entryCode && String(code || '').trim() !== s.entryCode) {
     throw new Error('選手入力パスコードが正しくありません。トップ画面から入り直してください。');
   }
