@@ -118,6 +118,14 @@ function apiSaveMatch(tid, p) {
 
     for (let k = 0; k < tail.length; k++) values[idx][MCOL.STATUS + k] = tail[k];
 
+    writeLog_([{
+      kind: 'リーグ戦', id: cur.id,
+      label: 'リーグ' + cur.league + ' 第' + cur.no + '試合 ' + cur.n1 + ' vs ' + cur.n2,
+      action: actionName_(cur.status, status, p.force),
+      before: matchSummary_(cur.status, cur.c1, cur.c2, cur.sets),
+      after: matchSummary_(status, c1, c2, sets),
+    }], p.meta);
+
     const snap = buildSnapshot_({ settings: settings, matches: valuesToMatches_(values) });
     putSnapshotCache_(snap);
     writeStandingsSheet_(snap);

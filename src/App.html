@@ -105,6 +105,22 @@
     return html;
   }
 
+  /** 端末番号（ブラウザごとにランダムに作って保存。更新ログ用） */
+  function deviceId() {
+    var id = '';
+    try { id = localStorage.getItem('deviceId') || ''; } catch (e) { /* ignore */ }
+    if (!id) {
+      id = 'D' + Math.random().toString(36).slice(2, 8).toUpperCase() + Date.now().toString(36).slice(-3).toUpperCase();
+      try { localStorage.setItem('deviceId', id); } catch (e) { S._deviceId = S._deviceId || id; id = S._deviceId; }
+    }
+    return id;
+  }
+
+  /** 更新ログに残す画面の情報 */
+  function clientMeta() {
+    return { __meta: true, device: deviceId(), ua: String(navigator.userAgent || '').slice(0, 200), cfp: S.cfp || '' };
+  }
+
   /** 全角数字を半角にして、数字以外を取り除く */
   function toDigits(v, maxLen) {
     var d = String(v == null ? '' : v)
@@ -915,6 +931,7 @@
 
   function submit(ctx, m, payload, force) {
     payload.code = S.entryCode;
+    payload.meta = clientMeta();
     payload.force = !!force;
     busy(true);
     call(ctx.api, S.tid, payload).then(function (res) {
@@ -1335,6 +1352,10 @@
       '<div class="hint">Cloudflare Worker などで独自ドメインに埋め込んで公開している場合に入力します。各大会の「🔗 リンク」が、このURLのリンク（…/?t=大会ID）になります。空欄にすると Apps Script のURLに戻ります。</div></div>' +
       (D.gasUrl ? '<div class="small muted" style="margin-bottom:10px;word-break:break-all">Apps Script のURL（Worker に設定するURL）:<br>' + esc(D.gasUrl) + '</div>' : '') +
       '<button class="btn primary" data-act="sys-pub">公開URLを保存</button></div>';
+    html += '<div class="section-title">アクセスログ連携キー（更新ログにIPアドレスを残す）</div><div class="card" id="logkey-form">' +
+      '<div class="form-row"><label>連携キー</label><input name="logSecret" value="' + esc(D.logSecret || '') + '" autocomplete="off" spellcheck="false">' +
+      '<div class="hint">Cloudflare Worker の変数 <b>LOG_SECRET</b> と同じ値を設定すると、更新ログにアクセス元のIPアドレスが「確認済」として記録されます（16文字以上）。空欄にすると解除。</div></div>' +
+      '<div class="row-actions" style="margin-top:0"><button class="btn ghost" data-act="sys-logkey-gen">🎲 ランダムに作成</button><button class="btn primary" data-act="sys-logkey">連携キーを保存</button></div></div>';
     html += '<div class="section-title">その他</div><div class="card"><button class="btn ghost" data-act="sys-pw">システム管理者パスワードを変更</button></div>';
     html += '</div>';
     app.innerHTML = html;
@@ -1391,6 +1412,18 @@
         sysCall('sysRemoveTournament', tid).then(function () { render(); loadTournaments(true).catch(function () {}); }).catch(function () {});
       });
     }
+    if (act === 'sys-logkey-gen') {
+      var chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789', key = '';
+      var rnd = new Uint32Array(32);
+      try { crypto.getRandomValues(rnd); } catch (e) { for (var q = 0; q < 32; q++) rnd[q] = Math.floor(Math.random() * 4294967295); }
+      for (var k = 0; k < 32; k++) key += chars.charAt(rnd[k] % chars.length);
+      document.querySelector('#logkey-form [name=logSecret]').value = key;
+      return toast('キーを作成しました。保存して、Worker の LOG_SECRET にも同じ値を設定してください');
+    }
+    if (act === 'sys-logkey') {
+      var lk = document.querySelector('#logkey-form [name=logSecret]').value.trim();
+      return sysCall('sysSetLogSecret', lk).then(function () { render(); toast(lk ? '連携キーを保存しました' : '連携キーを解除しました'); }).catch(function () {});
+    }
     if (act === 'sys-pub') {
       var pu = document.querySelector('#pub-form [name=publicUrl]').value.trim();
       return sysCall('sysSetPublicUrl', pu).then(function () { render(); toast(pu ? '公開URLを保存しました' : '公開URLを解除しました'); }).catch(function () {});
@@ -1445,7 +1478,8 @@
     var html = topbar('管理者メニュー', S.sysPw ? 'sys' : 'home') + '<div class="wrap">';
     html += '<div class="card" style="margin-top:16px"><b>' + esc(A.tournament.name) + '</b>' + (A.tournament.date ? ' <span class="muted small">' + esc(A.tournament.date) + '</span>' : '') +
       '<div class="row-actions"><a class="btn" href="' + esc(A.ssUrl) + '" target="_blank" rel="noopener">📄 スプレッドシートを開く</a>' +
-      (A.link ? '<button class="btn ghost" data-act="copy" data-text="' + esc(A.link) + '">🔗 この大会の直接リンクをコピー</button>' : '') + '</div></div>';
+      (A.link ? '<button class="btn ghost" data-act="copy" data-text="' + esc(A.link) + '">🔗 この大会の直接リンクをコピー</button>' : '') + '</div>' +
+      '<p class="small muted" style="margin:8px 0 0">結果の入力・修正や管理者の操作は、スプレッドシートの「<b>更新ログ</b>」シートに記録されます。</p></div>';
 
     var cst = s.status || '開催中';
     var stDesc = { '開催前': '参加者リストとルールのみ公開。試合の入力・閲覧はできません', '開催中': '試合の結果入力・閲覧ができます', '終了': '閲覧のみ。結果の入力はできません' };
@@ -1589,7 +1623,7 @@
   function adminCall(fn) {
     var args = Array.prototype.slice.call(arguments, 1);
     busy(true);
-    return call.apply(null, [fn, S.tid, S.adminPw].concat(args)).then(function (r) { busy(false); return r; })
+    return call.apply(null, [fn, S.tid, S.adminPw].concat(args, [clientMeta()])).then(function (r) { busy(false); return r; })
       .catch(function (e) { busy(false); showError(e); throw e; });
   }
 
@@ -2104,7 +2138,7 @@
     }).then(function (ok) {
       if (!ok) return;
       busy(true);
-      call('apiStartTMatches', S.tid, ids, S.entryCode).then(function (res) {
+      call('apiStartTMatches', S.tid, ids, S.entryCode, clientMeta()).then(function (res) {
         busy(false);
         S.tour = decorateTour(res.tour);
         S.tsel = {};
@@ -2186,6 +2220,8 @@
   // URL に ?t=大会ID があれば、その大会を直接開く
   try {
     google.script.url.getLocation(function (loc) {
+      // 独自ドメイン（Cloudflare Worker）経由のときは、署名付きのアクセス元情報が付いてくる（更新ログ用）
+      if (loc && loc.parameter && loc.parameter.cfp) S.cfp = String(loc.parameter.cfp);
       start(loc && loc.parameter && loc.parameter.t ? String(loc.parameter.t) : '');
     });
   } catch (e) {

@@ -18,6 +18,7 @@ function adminLogin(tid, pw) {
 }
 
 function adminGetData(tid, pw, autoAdded) {
+  if (autoAdded && autoAdded.__meta) autoAdded = null; // 画面の情報（更新ログ用）は無視
   useTournament_(tid);
   const settings = checkAdmin_(pw);
   if (!autoAdded) autoAdded = autoAssignLatePlayers_().added;
@@ -96,7 +97,11 @@ function pick_(p) {
 function adminSaveSettings(tid, pw, input) {
   useTournament_(tid);
   checkAdmin_(pw);
+  const prev = getSettings_();
   const next = saveSettings_(input);
+  const changed = SETTING_DEFS.filter(function (d) { return d.key !== 'rules' && d.key !== 'status' && String(prev[d.key]) !== String(next[d.key]); })
+    .map(function (d) { return d.key === 'adminPassword' || d.key === 'entryCode' ? d.label + '（変更）' : d.label + ': ' + prev[d.key] + '→' + next[d.key]; });
+  if (changed.length) writeLog_([{ kind: '管理', action: '設定を保存', after: changed.join(' / ') }], metaFrom_(arguments));
   if (next.title) updateTournament_(tid, { name: next.title });
   if (tourExists_()) reassignTables_(next); // 台の数が変わったら割り当てをやり直す
   clearCache_();
@@ -117,13 +122,18 @@ function adminCreateLeagues(tid, pw, input, force) {
   const s = input ? saveSettings_(input) : getSettings_();
   if (input && s.title) updateTournament_(tid, { name: s.title });
   const res = createLeagues_(s, !!force);
+  if (res.ok) {
+    writeLog_([{ kind: '管理', action: 'リーグ戦作成', after: res.summary.length + 'リーグ・' + res.summary.reduce(function (n, g) { return n + g.count; }, 0) + '名（' + res.summary.map(function (g) { return 'リーグ' + g.league + ':' + g.count + '名'; }).join(', ') + '）' }], metaFrom_(arguments));
+  }
   return JSON.stringify(res);
 }
 
 function adminAddPlayer(tid, pw, num, leagueNo) {
   useTournament_(tid);
   checkAdmin_(pw);
-  return JSON.stringify(addPlayerToLeague_(Number(num), Number(leagueNo)));
+  const res = addPlayerToLeague_(Number(num), Number(leagueNo));
+  writeLog_([{ kind: '管理', action: '選手をリーグに追加', after: res.name + ' → リーグ' + res.league + '（' + res.added + '試合を追加）' }], metaFrom_(arguments));
+  return JSON.stringify(res);
 }
 
 function adminAutoAssignLate(tid, pw) {
@@ -153,7 +163,12 @@ function adminCreateBrackets(tid, pw, input, force, planId) {
   checkAdmin_(pw);
   const s = input ? saveSettings_(input) : getSettings_();
   if (input && s.title) updateTournament_(tid, { name: s.title });
-  return JSON.stringify(createBrackets_(s, !!force, planId || null));
+  const res = createBrackets_(s, !!force, planId && typeof planId === 'string' ? planId : null);
+  if (res.ok) {
+    const u = res.summary.upper || {}, l = res.summary.lower || {};
+    writeLog_([{ kind: '管理', action: 'トーナメント作成', after: '上位' + (u.count || 0) + '名・下位' + (l.count || 0) + '名・台' + res.tables + '台' }], metaFrom_(arguments));
+  }
+  return JSON.stringify(res);
 }
 
 /** 開催ステータスを変更する（開催前 / 開催中 / 終了） */
@@ -161,7 +176,9 @@ function adminSetStatus(tid, pw, status) {
   useTournament_(tid);
   checkAdmin_(pw);
   if (TOUR_STATUSES.indexOf(status) < 0) throw new Error('開催ステータスが正しくありません。');
+  const prevStatus = getSettings_().status;
   saveSettings_({ status: status });
+  writeLog_([{ kind: '管理', action: '公開ステータスを変更', before: prevStatus, after: status }], metaFrom_(arguments));
   updateTournament_(tid, { status: status });
   clearCache_();
   return adminGetData(tid, pw);
@@ -174,6 +191,7 @@ function adminSaveRules(tid, pw, text) {
   text = String(text == null ? '' : text);
   if (text.length > 40000) throw new Error('ルールの文章が長すぎます（40,000文字まで）。');
   saveSettings_({ rules: text });
+  writeLog_([{ kind: '管理', action: 'ルールを保存', after: text.replace(/\s+/g, ' ').slice(0, 80) + (text.length > 80 ? '…' : '') }], metaFrom_(arguments));
   clearCache_();
   return adminGetData(tid, pw);
 }

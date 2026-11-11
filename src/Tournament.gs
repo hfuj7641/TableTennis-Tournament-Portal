@@ -751,6 +751,8 @@ function apiSaveTMatch(tid, p) {
     if (!m.p1 || !m.p2 || m.status === TSTATUS.BYE) throw new Error('この試合はまだ対戦相手が決まっていません。');
     if (m.wo) throw new Error('この試合は棄権による不戦勝です。取り消す場合は「参加者」シートの「棄権」のチェックを外してください。');
 
+    const R0 = roundsOf_(ms, m.type);
+    const before = { status: m.status, c1: m.c1, c2: m.c2, sets: m.sets.slice(), bestOf: m.bestOf };
     // 試合ごとのセット数の変更（当日の変更用）
     if (p.bestOf !== undefined && p.bestOf !== null && Number(p.bestOf) !== m.bestOf) {
       const nb = Number(p.bestOf);
@@ -797,6 +799,15 @@ function apiSaveTMatch(tid, p) {
     }
     applyWithdrawals_(ms, withdrawnSet_()); // 勝ち上がった先の相手が棄権していれば不戦勝
     assignTables_(ms, settings.tableCount); // 空いた台に次の試合を入れる
+    let act = actionName_(before.status, m.status, p.force);
+    if (before.bestOf !== m.bestOf) act = 'セット数を変更（' + before.bestOf + '→' + m.bestOf + 'セット）' + (act === '変更なし' ? '' : '・' + act);
+    writeLog_([{
+      kind: 'トーナメント', id: m.id,
+      label: m.type + 'T ' + roundName_(R0, m.round, m.pos) + ' ' + m.n1 + ' vs ' + m.n2 + (m.table ? '（台' + m.table + '）' : ''),
+      action: act,
+      before: matchSummary_(before.status, before.c1, before.c2, before.sets, before.bestOf !== m.bestOf ? '・' + before.bestOf + 'セット' : ''),
+      after: matchSummary_(m.status, m.c1, m.c2, m.sets, before.bestOf !== m.bestOf ? '・' + m.bestOf + 'セット' : ''),
+    }], p.meta);
     writeTMatches_(ms);
 
     const snap = buildSnapshot_({ settings: settings, tmatches: ms });
@@ -837,6 +848,13 @@ function apiStartTMatches(tid, ids, code) {
     if (started.length) {
       assignTables_(ms, settings.tableCount);
       writeTMatches_(ms);
+      writeLog_(ms.filter(function (m) { return started.indexOf(m.id) >= 0; }).map(function (m) {
+        return {
+          kind: 'トーナメント', id: m.id,
+          label: m.type + 'T ' + roundName_(roundsOf_(ms, m.type), m.round, m.pos) + ' ' + m.n1 + ' vs ' + m.n2 + '（台' + m.table + '）',
+          action: '試合開始（一括）', before: '未実施（呼び出し中）', after: '試合中',
+        };
+      }), metaFrom_(arguments));
     }
     const snap = buildSnapshot_({ settings: settings, tmatches: ms });
     putSnapshotCache_(snap);

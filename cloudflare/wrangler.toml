@@ -6,11 +6,26 @@ name = "tabletennis-portal"
 main = "worker.js"
 compatibility_date = "2024-09-23"
 
+# アクセスログを Cloudflare の画面（Workers Logs）で見られるようにする
+[observability]
+enabled = true
+
 [vars]
 GAS_URL = "https://script.google.com/macros/s/AKfycbw8GYM-5psJbPkUbT-iPN7x2L-E76JqAHlGUSY7R6P6uVG8zaMRpfe42PumgcL6ZYE5dg/exec"
 SITE_TITLE = "卓球大会ポータル"
 SITE_DESC = "卓球大会のリーグ戦・トーナメントの試合結果ポータル"
 # OG_IMAGE = "https://example.com/og.png"
+
+# シークレット（値はファイルに書かず、コマンドで設定する）
+#   npx wrangler secret put LOG_SECRET     … 更新ログにIPを残すための連携キー（アプリ側にも同じ値）
+#   npx wrangler secret put LOG_VIEW_KEY   … アクセスログCSVのダウンロード用キー
+
+# アクセスログを長期保存する D1 データベース（任意）
+#   npx wrangler d1 create tabletennis-access-log   で作成し、表示された database_id を書く
+# [[d1_databases]]
+# binding = "ACCESS_DB"
+# database_name = "tabletennis-access-log"
+# database_id = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
 
 # 独自ドメインの割り当て（ドメインの DNS が Cloudflare にある場合）
 # routes = [
