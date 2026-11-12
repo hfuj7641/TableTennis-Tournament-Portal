@@ -86,6 +86,7 @@ function buildSnapshot_(opt) {
     boot: {
       status: settings.status,
       rules: settings.rules,
+      info: { venue: settings.venue, address: settings.address, startTime: settings.startTime, contact: settings.contact, memo: settings.memo },
       hasTournament: !!tour.exists,
       tour: tour.exists ? { upper: tourSummary(tour.upper), lower: tourSummary(tour.lower), tables: tour.tables } : null,
       title: settings.title,

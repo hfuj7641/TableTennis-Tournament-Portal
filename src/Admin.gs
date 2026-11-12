@@ -184,6 +184,27 @@ function adminSetStatus(tid, pw, status) {
   return adminGetData(tid, pw);
 }
 
+/** 大会情報（場所・住所・開始時間・当日の連絡先・メモ）を保存する */
+function adminSaveInfo(tid, pw, info) {
+  useTournament_(tid);
+  checkAdmin_(pw);
+  info = info || {};
+  const keys = ['venue', 'address', 'startTime', 'contact', 'memo'];
+  const prev = getSettings_();
+  const input = {};
+  keys.forEach(function (k) {
+    const v = String(info[k] == null ? '' : info[k]);
+    if (v.length > (k === 'memo' ? 5000 : 300)) throw new Error(labelOf_(k) + 'が長すぎます。');
+    input[k] = v;
+  });
+  const next = saveSettings_(input);
+  const changed = keys.filter(function (k) { return String(prev[k]) !== String(next[k]); })
+    .map(function (k) { return labelOf_(k) + ': ' + (String(next[k]).replace(/\s+/g, ' ').slice(0, 40) || '（空欄）'); });
+  if (changed.length) writeLog_([{ kind: '管理', action: '大会情報を保存', after: changed.join(' / ') }], metaFrom_(arguments));
+  clearCache_();
+  return adminGetData(tid, pw);
+}
+
 /** ルールの文章を保存する */
 function adminSaveRules(tid, pw, text) {
   useTournament_(tid);

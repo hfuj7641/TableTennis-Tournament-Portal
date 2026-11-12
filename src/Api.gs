@@ -11,7 +11,7 @@ function apiGetBoot(tid) {
   const json = getBootJson_();
   const b = JSON.parse(json);
   if (b.status !== '開催前') return json;
-  return JSON.stringify({ title: b.title, status: b.status, rules: b.rules, leagues: [], players: [], hasTournament: false, requiresEntryCode: b.requiresEntryCode });
+  return JSON.stringify({ title: b.title, status: b.status, rules: b.rules, info: b.info, leagues: [], players: [], hasTournament: false, requiresEntryCode: b.requiresEntryCode });
 }
 
 /** 開催前は試合の情報を見せない */

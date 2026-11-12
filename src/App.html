@@ -329,7 +329,7 @@
       '<div class="home" style="padding-top:24px">' +
       '<div class="hero-ball">🏓</div>' +
       '<h1>' + esc(title) + '</h1>' +
-      '<p class="sub">' + (S.tournament && S.tournament.date ? esc(S.tournament.date) + ' ・ ' : '') + statusChip(st) + '</p>';
+      '<p class="sub">' + (S.tournament && S.tournament.date ? esc(S.tournament.date) + ' ・ ' : '') + statusChip(st) + '</p>' + infoHtml();
     var info = '<div class="home-sub"><button class="mid-btn" data-act="participants">👥 参加者リスト</button><button class="mid-btn" data-act="rules">📖 ルール</button></div>';
     if (st === '開催前') {
       html += '<div class="notice info" style="text-align:left;margin-bottom:20px">この大会は<b>開催前</b>です。参加者リストとルールを確認できます。<br>試合の結果入力・閲覧は、大会当日に公開されます。</div>' +
@@ -345,6 +345,37 @@
     }
     html += '<button class="admin-link" data-act="admin">この大会の管理者メニュー</button></div>';
     app.innerHTML = html;
+  }
+
+  /* ----- 大会情報 ----- */
+
+  /** 連絡先: 電話番号はタップで発信、メールはタップでメール作成 */
+  function contactHtml(text) {
+    return esc(text).replace(/([\w.+-]+@[\w-]+(?:\.[\w-]+)+)|(\+\d[\d\-() ]{7,}\d|0\d[\d\-() ]{6,}\d)/g, function (m, mail, tel) {
+      if (mail) return '<a href="mailto:' + mail + '">' + mail + '</a>';
+      return '<a href="tel:' + tel.replace(/[^\d+]/g, '') + '">' + tel + '</a>';
+    });
+  }
+
+  function infoHtml() {
+    var I = (S.boot && S.boot.info) || {};
+    var date = S.tournament && S.tournament.date;
+    if (!date && !I.venue && !I.address && !I.startTime && !I.contact && !I.memo) return '';
+    var row = function (icon, label, val) {
+      return '<div class="info-row"><span class="info-ico">' + icon + '</span><span class="info-label">' + label + '</span><span class="info-val">' + val + '</span></div>';
+    };
+    var html = '<div class="card info-card">';
+    if (date) html += row('📅', '開催日', esc(date));
+    if (I.startTime) html += row('⏰', '開始時間', esc(I.startTime));
+    if (I.venue) html += row('🏢', '場所', esc(I.venue));
+    if (I.address || I.venue) {
+      var q = encodeURIComponent(I.address || I.venue);
+      if (I.address) html += row('📍', '住所', esc(I.address));
+      html += '<div class="info-map"><a class="btn" href="https://www.google.com/maps/search/?api=1&query=' + q + '" target="_blank" rel="noopener">🗺️ Googleマップで開く</a></div>';
+    }
+    if (I.contact) html += row('📞', '当日の連絡先', contactHtml(I.contact));
+    if (I.memo) html += '<div class="info-memo">' + esc(I.memo).replace(/\n/g, '<br>') + '</div>';
+    return html + '</div>';
   }
 
   /* ----- 参加者リスト ----- */
@@ -1488,6 +1519,15 @@
         return '<button class="' + (cst === k ? 'on ' + (k === '開催前' ? 'before' : k === '開催中' ? 'playing' : 'done') : '') + '" data-act="adm-status" data-v="' + k + '">' + k + '</button>';
       }).join('') + '</div>' +
       '<p class="small" style="margin:8px 0 0">現在: <b>' + esc(cst) + '</b> … ' + esc(stDesc[cst]) + '</p></div>';
+    var inf = function (k, label, ph) { return '<div class="form-row"><label>' + label + '</label><input name="' + k + '" value="' + esc(s[k] || '') + '" placeholder="' + esc(ph) + '" autocomplete="off"></div>'; };
+    html += '<div class="section-title">大会情報（開催前から大会トップに公開）</div><div class="card" id="info-form">' +
+      inf('venue', '場所', '例: 〇〇市総合体育館 第2競技場') +
+      inf('address', '住所', '例: 東京都〇〇市〇〇1-2-3') +
+      inf('startTime', '開始時間', '例: 9:00受付 / 9:30開始') +
+      inf('contact', '当日の連絡先', '例: 大会事務局 山田 090-1234-5678') +
+      '<div class="form-row"><label>メモ</label><textarea name="memo" class="rules-edit" rows="4" placeholder="例: 体育館シューズ持参。駐車場は台数に限りがあります。">' + esc(s.memo || '') + '</textarea></div>' +
+      '<div class="small muted" style="margin:-6px 0 10px">住所（なければ場所）から Googleマップのリンクを表示します。連絡先の電話番号はスマホでタップすると電話をかけられます。</div>' +
+      '<button class="btn primary" data-act="adm-info-save">大会情報を保存</button></div>';
     html += '<div class="section-title">ルール（開催前から公開）</div><div class="card">' +
       '<textarea id="adm-rules" class="rules-edit" rows="10" placeholder="例:\n# 試合形式\n- リーグ戦は3セットマッチ（2セット先取）\n- 上位2名が上位トーナメントへ\n# 注意事項\n- 試合結果は選手自身が入力してください">' + esc(s.rules || '') + '</textarea>' +
       '<div class="small muted" style="margin:6px 0 10px">「# 」で始まる行は見出し、「- 」や「・」で始まる行は箇条書きになります。</div>' +
@@ -1998,6 +2038,14 @@
             loadTournaments(true).catch(function () {});
           }).catch(function () {});
         });
+        break;
+      }
+      case 'adm-info-save': {
+        var info = {};
+        document.querySelectorAll('#info-form [name]').forEach(function (x) { info[x.name] = x.value; });
+        adminCall('adminSaveInfo', info).then(function (d) {
+          S.admin = d; render(); toast('大会情報を保存しました'); loadBoot(true).catch(function () {});
+        }).catch(function () {});
         break;
       }
       case 'adm-rules-save':

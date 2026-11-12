@@ -5,6 +5,11 @@
 const SETTING_DEFS = [
   { key: 'title', label: '大会名', def: '卓球大会', type: 'string', desc: 'Webページのタイトルに表示されます' },
   { key: 'status', label: '開催ステータス', def: '開催中', type: 'string', desc: '開催前（参加者リストとルールのみ公開）/ 開催中（試合の入力・閲覧）/ 終了（閲覧のみ）' },
+  { key: 'venue', label: '場所', def: '', type: 'string', desc: '会場名（大会トップに表示）' },
+  { key: 'address', label: '住所', def: '', type: 'string', desc: '会場の住所（Googleマップのリンクになります）' },
+  { key: 'startTime', label: '開始時間', def: '', type: 'string', desc: '例: 9:00受付 / 9:30開始' },
+  { key: 'contact', label: '当日の連絡先', def: '', type: 'string', desc: '電話番号やメールアドレスなど（大会トップに公開されます）' },
+  { key: 'memo', label: 'メモ', def: '', type: 'string', desc: '持ち物・駐車場など（大会トップに表示）' },
   { key: 'rules', label: 'ルール', def: '', type: 'string', desc: 'Webの「ルール」に表示する文章（管理者メニューから編集できます）' },
   { key: 'leagueCount', label: 'リーグ戦の数', def: 4, type: 'int', desc: 'リーグ（グループ）の数' },
   { key: 'playersPerLeague', label: '各リーグの標準選手数', def: 4, type: 'int', desc: 'リーグ数の目安計算に使います。人数が割り切れない場合は ±1 名で調整されます' },
