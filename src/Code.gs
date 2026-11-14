@@ -18,7 +18,7 @@ const STATUS = {
 };
 
 /** 画面の下に表示するバージョン（デプロイが更新されているかの確認用） */
-const APP_VERSION = '4.9（メール送信のエラー表示の改善）';
+const APP_VERSION = '4.10（Workspace の送信中継URLに対応）';
 
 /** 1試合で記録できる最大セット数（7セットマッチまで対応） */
 const MAX_SETS = 7;

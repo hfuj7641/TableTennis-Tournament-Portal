@@ -222,7 +222,7 @@ Apps Script のメールは、スクリプトを動かすアカウントの Gmai
 1. hiroaki@machineguntalk.com で [script.google.com](https://script.google.com/) を開き「新しいプロジェクト」→ `mailer/Mailer.gs` の中身を貼り付け（`appsscript.json` も `mailer/appsscript.json` の内容に置き換え）
 2. 関数 `authorize` を実行して Gmail の権限を承認（ログに送信元として使えるアドレスが表示される）
 3. 「プロジェクトの設定 → スクリプト プロパティ」に `MAIL_RELAY_SECRET` を追加（値はポータルの画面で作る連携キー。手順5）
-4. 「デプロイ → 新しいデプロイ → ウェブアプリ」（次のユーザーとして実行: 自分 / アクセスできるユーザー: 全員）→ 表示された URL（…/exec）をコピー
+4. 「デプロイ → 新しいデプロイ → ウェブアプリ」（次のユーザーとして実行: 自分 / アクセスできるユーザー: 全員）→ 表示された URL をコピー（`https://script.google.com/macros/s/…/exec`、Google Workspace のアカウントでは `https://script.google.com/a/macros/ドメイン/s/…/exec`。末尾は `/exec`）。後から確認するときは「デプロイ → デプロイを管理」
 5. ポータルの「大会の作成・管理（システム管理者）」→「メール送信の設定」で、送信元・表示名・送信中継のURL・連携キー（「🎲 連携キーを作成」→ 手順3にも同じ値）を入力して保存
 6. 「接続を確認」で、送信元が使えること・今日あと送信できる数を確認
 

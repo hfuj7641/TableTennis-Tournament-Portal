@@ -204,8 +204,10 @@ function sysSetMailConfig(pw, cfg) {
   cfg = cfg || {};
   const p = props_();
   const url = String(cfg.relayUrl || '').trim();
-  if (url && !/^https:\/\/script\.google\.com\/macros\/s\/[\w-]+\/exec$/.test(url)) {
-    throw new Error('送信中継のURLは https://script.google.com/macros/s/…/exec の形で入力してください。');
+  // 個人アカウント: https://script.google.com/macros/s/…/exec
+  // Google Workspace: https://script.google.com/a/macros/ドメイン/s/…/exec
+  if (url && !/^https:\/\/script\.google\.com\/(?:a\/macros\/[\w.-]+|macros)\/s\/[\w-]+\/exec$/.test(url)) {
+    throw new Error('送信中継のURLは https://script.google.com/macros/s/…/exec（Google Workspace の場合は https://script.google.com/a/macros/ドメイン/s/…/exec）の形で入力してください。末尾は /exec です（/dev は使えません）。');
   }
   const from = String(cfg.from || '').trim();
   if (from && !isEmail_(from)) throw new Error('送信元のメールアドレスが正しくありません。');
