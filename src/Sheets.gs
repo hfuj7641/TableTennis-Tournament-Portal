@@ -345,10 +345,26 @@ function ensureGradeColumn_() {
 function ensureWithdrawColumn_() {
   const sh = sheet_(SHEET.PLAYERS);
   const c = playerColumns_(sh);
-  if (c.withdrawn >= 0) return false;
+  const rule = SpreadsheetApp.newDataValidation().requireCheckbox().build();
+  if (c.withdrawn >= 0) {
+    // 列はあるがチェックボックスになっていない場合（見出しだけ作られたシートなど）はチェックボックスにする
+    const col = c.withdrawn + 1;
+    let has = false;
+    try {
+      const dv = sh.getRange(2, col).getDataValidation();
+      has = !!dv && dv.getCriteriaType && dv.getCriteriaType() === SpreadsheetApp.DataValidationCriteria.CHECKBOX;
+    } catch (err) {
+      has = false;
+    }
+    if (!has) {
+      sh.getRange(2, col, Math.max(500, sh.getLastRow() + 100), 1).setDataValidation(rule);
+      return true;
+    }
+    return false;
+  }
   const col = Math.max(sh.getLastColumn(), 1) + 1;
   sh.getRange(1, col).setValue('棄権').setFontWeight('bold').setBackground('#fdecec');
-  sh.getRange(2, col, 500, 1).setDataValidation(SpreadsheetApp.newDataValidation().requireCheckbox().build());
+  sh.getRange(2, col, 500, 1).setDataValidation(rule);
   return true;
 }
 
