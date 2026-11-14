@@ -120,7 +120,17 @@ function sendViaRelay_(cfg, mails) {
 
 /** このアプリのアカウントの Gmail から直接送る */
 function sendDirect_(cfg, mails) {
-  const aliases = GmailApp.getAliases();
+  let aliases;
+  try {
+    aliases = GmailApp.getAliases();
+  } catch (err) {
+    if (/permission|権限|authoriz/i.test(String(err && err.message || err))) {
+      throw new Error('送信中継が設定されていないため、このアプリのアカウントから直接送ろうとしましたが、Gmail の権限が承認されていません。\n' +
+        '・送信元（' + cfg.from + '）から送る場合は、「大会の作成・管理」→「メール送信の設定」で送信中継のURLと連携キーを保存してください。\n' +
+        '・このアカウントから直接送る場合は、Apps Script のエディタで関数 authorize を実行して権限を承認してください。');
+    }
+    throw err;
+  }
   let me = '';
   try { me = Session.getEffectiveUser().getEmail(); } catch (err) { me = ''; }
   if (cfg.from && cfg.from !== me && aliases.indexOf(cfg.from) < 0) {

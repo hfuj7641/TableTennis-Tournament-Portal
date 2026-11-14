@@ -1813,7 +1813,8 @@
     var sel = g.list.filter(function (x) { return !M.excluded[x.email.toLowerCase()]; });
     var missing = I.recipients.filter(function (r) { return mailMatches(r, M.filter, M.noWd) && !r.email; }).length;
     html += '<div class="card" style="margin-top:16px"><div class="small muted">送信元</div><b>' + esc(I.fromName) + '</b> &lt;' + esc(I.from) + '&gt;' +
-      '<div class="small muted" style="margin-top:4px">送信方法: ' + (I.mode === 'relay' ? '送信中継' : '直接（' + esc(I.sender) + '）') + '</div></div>';
+      '<div class="small muted" style="margin-top:4px">送信方法: ' + (I.mode === 'relay' ? '送信中継' : '直接（' + esc(I.sender) + '）') + '</div>' +
+      (I.mode !== 'relay' ? '<div class="notice warn" style="margin-bottom:0">送信中継が設定されていません。このアプリのアカウントから直接送ります（送信元のアドレスがそのアカウントの Gmail に登録されていない場合は送れません）。送信元から送るには、「大会の作成・管理」→「メール送信の設定」で送信中継のURLと連携キーを保存してください。</div>' : '') + '</div>';
 
     html += '<div class="section-title">宛先</div><div class="card">' +
       '<div class="form-row"><label>絞り込み</label><select id="mail-filter">' + MAIL_FILTERS.map(function (f) {

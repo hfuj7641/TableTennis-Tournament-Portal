@@ -18,7 +18,7 @@ const STATUS = {
 };
 
 /** 画面の下に表示するバージョン（デプロイが更新されているかの確認用） */
-const APP_VERSION = '4.8（参加者へのメール送信）';
+const APP_VERSION = '4.9（メール送信のエラー表示の改善）';
 
 /** 1試合で記録できる最大セット数（7セットマッチまで対応） */
 const MAX_SETS = 7;
@@ -75,6 +75,7 @@ function authorize() {
   CacheService.getScriptCache().get('x');
   PropertiesService.getScriptProperties().getKeys();
   if (false) { SpreadsheetApp.create('authorize'); GmailApp.getAliases(); UrlFetchApp.fetch('https://example.com'); } // スコープ検出用（実行はされない）
+  try { console.log('Gmail の権限: OK（送信元として使えるアドレス: ' + (GmailApp.getAliases().join(', ') || 'なし') + '）'); } catch (err) { console.log('Gmail の権限: ' + err); }
   console.log('承認が完了しました。ウェブアプリとしてデプロイしてください。');
 }
 
