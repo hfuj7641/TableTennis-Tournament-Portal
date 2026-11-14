@@ -158,7 +158,7 @@ function sysGetData(pw) {
     };
   });
   list.sort(function (a, b) { return String(b.date).localeCompare(String(a.date)); });
-  return JSON.stringify({ tournaments: list, publicUrl: props_().getProperty(PROP_PUBLIC_URL) || '', gasUrl: gasUrl_(), logSecret: props_().getProperty(PROP_LOG_SECRET) || '' });
+  return JSON.stringify({ tournaments: list, publicUrl: props_().getProperty(PROP_PUBLIC_URL) || '', gasUrl: gasUrl_(), logSecret: props_().getProperty(PROP_LOG_SECRET) || '', mail: mailConfig_() });
 }
 
 function sysChangePassword(pw, next) {

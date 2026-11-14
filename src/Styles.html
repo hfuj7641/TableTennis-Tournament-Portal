@@ -344,6 +344,17 @@
   .info-map { padding: 6px 0 8px 30px; }
   .info-map .btn { min-height: 36px; padding: 6px 14px; font-size: 14px; text-decoration: none; }
   .info-memo { margin-top: 8px; padding: 10px 12px; background: #f8f9fb; border-radius: 10px; font-size: 14px; line-height: 1.7; overflow-wrap: anywhere; }
+  .chkline { display: flex; align-items: center; gap: 8px; font-size: 14px; margin: 0 0 10px; }
+  .chkline input, .mail-item input { width: 20px; height: 20px; accent-color: var(--primary); flex: none; }
+  .mail-summary { display: flex; align-items: center; gap: 8px; padding: 8px 0; border-top: 1px solid var(--line); font-size: 15px; }
+  .mail-list { max-height: 360px; overflow-y: auto; border: 1px solid var(--line); border-radius: 10px; margin-bottom: 10px; }
+  .mail-item { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-bottom: 1px solid var(--line); cursor: pointer; }
+  .mail-item:last-child { border-bottom: 0; }
+  .mail-who { min-width: 0; overflow-wrap: anywhere; }
+  .mail-who small { color: var(--muted); }
+  .mail-addr { display: block; font-size: 12px; color: var(--muted); }
+  .mail-preview { margin-top: 8px; padding: 12px; background: #f8f9fb; border-radius: 10px; font-size: 14px; line-height: 1.7; overflow-wrap: anywhere; }
+  .mail-preview hr { border: 0; border-top: 1px solid var(--line); margin: 8px 0; }
   .seed-list { padding-left: 24px; }
   .seed-list li { margin: 3px 0; }
 </style>

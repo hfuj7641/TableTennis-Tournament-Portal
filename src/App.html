@@ -121,6 +121,14 @@
     return { __meta: true, device: deviceId(), ua: String(navigator.userAgent || '').slice(0, 200), cfp: S.cfp || '' };
   }
 
+  function randomKey(n) {
+    var chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789', key = '';
+    var rnd = new Uint32Array(n);
+    try { crypto.getRandomValues(rnd); } catch (e) { for (var q = 0; q < n; q++) rnd[q] = Math.floor(Math.random() * 4294967295); }
+    for (var k = 0; k < n; k++) key += chars.charAt(rnd[k] % chars.length);
+    return key;
+  }
+
   /** 全角数字を半角にして、数字以外を取り除く */
   function toDigits(v, maxLen) {
     var d = String(v == null ? '' : v)
@@ -292,6 +300,7 @@
     if (v === 'home') return renderHome();
     if (v === 'participants') return renderParticipants();
     if (v === 'rules') return renderRules();
+    if (v === 'mail') return renderMail();
     if (tourStatus() === '開催前' && v !== 'admin' && v !== 'tpreview') { S.view = 'home'; return renderHome(); }
     if (v === 'select') return renderSelect();
     if (v === 'league') return withLeague(renderLeague);
@@ -1383,6 +1392,15 @@
       '<div class="hint">Cloudflare Worker などで独自ドメインに埋め込んで公開している場合に入力します。各大会の「🔗 リンク」が、このURLのリンク（…/?t=大会ID）になります。空欄にすると Apps Script のURLに戻ります。</div></div>' +
       (D.gasUrl ? '<div class="small muted" style="margin-bottom:10px;word-break:break-all">Apps Script のURL（Worker に設定するURL）:<br>' + esc(D.gasUrl) + '</div>' : '') +
       '<button class="btn primary" data-act="sys-pub">公開URLを保存</button></div>';
+    var MC = D.mail || {};
+    html += '<div class="section-title">メール送信の設定（参加者へのメール）</div><div class="card" id="mailcfg-form">' +
+      '<div class="grid2"><div class="form-row"><label>送信元のメールアドレス</label><input name="from" value="' + esc(MC.from || '') + '" autocomplete="off" inputmode="email"></div>' +
+      '<div class="form-row"><label>送信者の表示名</label><input name="fromName" value="' + esc(MC.fromName || '') + '" autocomplete="off"></div></div>' +
+      '<div class="form-row"><label>送信中継のURL（任意）</label><input name="relayUrl" value="' + esc(MC.relayUrl || '') + '" placeholder="https://script.google.com/macros/s/…/exec" autocomplete="off">' +
+      '<div class="hint">送信元のアドレスを使えるアカウント（例: hiroaki@machineguntalk.com）でデプロイした「送信中継」（mailer/Mailer.gs）のURL。空欄なら、このアプリをデプロイしたアカウントの Gmail から直接送ります。</div></div>' +
+      '<div class="form-row"><label>送信中継の連携キー</label><input name="relaySecret" value="' + esc(MC.relaySecret || '') + '" autocomplete="off" spellcheck="false">' +
+      '<div class="hint">送信中継のスクリプト プロパティ <b>MAIL_RELAY_SECRET</b> と同じ値（16文字以上）。</div></div>' +
+      '<div class="row-actions" style="margin-top:0"><button class="btn ghost" data-act="sys-mail-gen">🎲 連携キーを作成</button><button class="btn primary" data-act="sys-mail-save">保存</button><button class="btn" data-act="sys-mail-check">接続を確認</button></div></div>';
     html += '<div class="section-title">アクセスログ連携キー（更新ログにIPアドレスを残す）</div><div class="card" id="logkey-form">' +
       '<div class="form-row"><label>連携キー</label><input name="logSecret" value="' + esc(D.logSecret || '') + '" autocomplete="off" spellcheck="false">' +
       '<div class="hint">Cloudflare Worker の変数 <b>LOG_SECRET</b> と同じ値を設定すると、更新ログにアクセス元のIPアドレスが「確認済」として記録されます（16文字以上）。空欄にすると解除。</div></div>' +
@@ -1442,6 +1460,25 @@
         if (!ok) return;
         sysCall('sysRemoveTournament', tid).then(function () { render(); loadTournaments(true).catch(function () {}); }).catch(function () {});
       });
+    }
+    if (act === 'sys-mail-gen') {
+      document.querySelector('#mailcfg-form [name=relaySecret]').value = randomKey(32);
+      return toast('連携キーを作成しました。保存して、送信中継の MAIL_RELAY_SECRET にも同じ値を設定してください');
+    }
+    if (act === 'sys-mail-save') {
+      var mc = {};
+      document.querySelectorAll('#mailcfg-form [name]').forEach(function (x) { mc[x.name] = x.value.trim(); });
+      return sysCall('sysSetMailConfig', mc).then(function () { render(); toast('メール送信の設定を保存しました'); }).catch(function () {});
+    }
+    if (act === 'sys-mail-check') {
+      busy(true);
+      return call('sysTestMailRelay', S.sysPw).then(function (r) {
+        busy(false);
+        alertBox(r.fromOk ? '送信中継に接続できました' : '送信元が使えません',
+          '<p>送信するアカウント: <b>' + esc(r.account) + '</b></p>' +
+          '<p>送信元 ' + esc(r.from || '（未設定）') + ': <b>' + (r.fromOk ? '使えます' : 'このアカウントの Gmail に「他のメールアドレス（送信元）」として登録されていません') + '</b></p>' +
+          '<p class="small muted">今日あと送信できる数: ' + esc(r.remaining) + ' 通</p>', r.fromOk ? '✅' : '⚠️');
+      }).catch(function (e) { busy(false); showError(e); });
     }
     if (act === 'sys-logkey-gen') {
       var chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789', key = '';
@@ -1532,6 +1569,10 @@
       '<textarea id="adm-rules" class="rules-edit" rows="10" placeholder="例:\n# 試合形式\n- リーグ戦は3セットマッチ（2セット先取）\n- 上位2名が上位トーナメントへ\n# 注意事項\n- 試合結果は選手自身が入力してください">' + esc(s.rules || '') + '</textarea>' +
       '<div class="small muted" style="margin:6px 0 10px">「# 」で始まる行は見出し、「- 」や「・」で始まる行は箇条書きになります。</div>' +
       '<div class="row-actions" style="margin-top:0"><button class="btn primary" data-act="adm-rules-save">ルールを保存</button><button class="btn ghost" data-act="adm-rules-preview">表示を確認</button></div></div>';
+
+    html += '<div class="section-title">メール送信</div><div class="card">' +
+      '<p class="small" style="margin-top:0">「参加者」シートの名前とメールアドレスの人に、件名と本文を入力してメールを送れます（宛先の絞り込み・テスト送信あり）。</p>' +
+      '<button class="btn accent block" data-act="mail-open">📧 参加者にメールを送る</button></div>';
 
     html += '<div class="section-title">参加者の状況（「参加者」シート）</div><div class="card">' +
       '<div class="stats">' +
@@ -1712,6 +1753,125 @@
       x.seeds.map(function (e) {
         return '<li>' + (e.withdrawn ? '<span class="wd">' + esc(withTeam(e.name, e.team)) + '</span> ' + '<span class="badge wdb">棄権</span>' : esc(withTeam(e.name, e.team))) + ' <span class="small muted">リーグ' + e.league + '・' + e.rank + '位・' + e.wins + '勝' + e.losses + '敗・セット' + e.setsWon + '-' + e.setsLost + '</span></li>';
       }).join('') + '</ol>';
+  }
+
+  /* ----- メール送信（管理者） ----- */
+
+  var MAIL_FILTERS = [
+    ['all', '全員'], ['attend', '参加確認済み'], ['paid', '支払確認済み'], ['unpaid', '参加確認済み・未払い'],
+    ['eligible', 'リーグ対象（参加・支払・くじ番号あり）'], ['notattend', '参加確認がまだの人'],
+  ];
+
+  function mailMatches(r, f, noWd) {
+    if (noWd && r.withdrawn) return false;
+    if (f === 'attend') return r.attend;
+    if (f === 'paid') return r.paid;
+    if (f === 'unpaid') return r.attend && !r.paid;
+    if (f === 'eligible') return r.eligible;
+    if (f === 'notattend') return !r.attend;
+    return true;
+  }
+
+  /** 絞り込んだ宛先を、メールアドレスごとにまとめる */
+  function mailGroups() {
+    var M = S.mail, map = {}, list = [], invalid = [];
+    M.info.recipients.forEach(function (r) {
+      if (!mailMatches(r, M.filter, M.noWd)) return;
+      if (!r.valid) { if (r.email) invalid.push(r); return; } // 空欄は「空欄」として別に数える
+      var key = r.email.toLowerCase();
+      if (!map[key]) { map[key] = { email: r.email, names: [], teams: [] }; list.push(map[key]); }
+      map[key].names.push(r.name);
+      if (r.team && map[key].teams.indexOf(r.team) < 0) map[key].teams.push(r.team);
+    });
+    return { list: list, invalid: invalid };
+  }
+
+  function mailSync() {
+    var sj = document.getElementById('mail-subject'), bd = document.getElementById('mail-body'), ta = document.getElementById('mail-testto');
+    if (sj) S.mail.subject = sj.value;
+    if (bd) S.mail.body = bd.value;
+    if (ta) S.mail.testTo = ta.value;
+  }
+
+  function mailSelected() {
+    var g = mailGroups();
+    return g.list.filter(function (x) { return !S.mail.excluded[x.email.toLowerCase()]; });
+  }
+
+  function renderMail() {
+    if (!S.admin) { go('home', {}, true); return; }
+    var html = topbar('メール送信', 'admin') + '<div class="wrap">';
+    if (!S.mail) {
+      app.innerHTML = html + '<div class="loading"><div class="spinner"></div>読み込み中…</div></div>';
+      adminCall('adminGetMailInfo').then(function (info) {
+        S.mail = { info: info, filter: 'all', noWd: true, excluded: {}, subject: '', body: '', testTo: '' };
+        if (S.view === 'mail') render();
+      }).catch(function () { go('admin', {}, true); });
+      return;
+    }
+    var M = S.mail, I = M.info, g = mailGroups();
+    var sel = g.list.filter(function (x) { return !M.excluded[x.email.toLowerCase()]; });
+    var missing = I.recipients.filter(function (r) { return mailMatches(r, M.filter, M.noWd) && !r.email; }).length;
+    html += '<div class="card" style="margin-top:16px"><div class="small muted">送信元</div><b>' + esc(I.fromName) + '</b> &lt;' + esc(I.from) + '&gt;' +
+      '<div class="small muted" style="margin-top:4px">送信方法: ' + (I.mode === 'relay' ? '送信中継' : '直接（' + esc(I.sender) + '）') + '</div></div>';
+
+    html += '<div class="section-title">宛先</div><div class="card">' +
+      '<div class="form-row"><label>絞り込み</label><select id="mail-filter">' + MAIL_FILTERS.map(function (f) {
+        return '<option value="' + f[0] + '"' + (M.filter === f[0] ? ' selected' : '') + '>' + esc(f[1]) + '</option>';
+      }).join('') + '</select></div>' +
+      '<label class="chkline"><input type="checkbox" id="mail-nowd"' + (M.noWd ? ' checked' : '') + '> 棄権の人を除く</label>' +
+      '<div class="mail-summary"><b>' + sel.length + '</b> 件に送信（' + sel.reduce(function (n, x) { return n + x.names.length; }, 0) + '名分）' +
+      '<span style="flex:1"></span><button class="btn ghost" data-act="mail-all" style="min-height:auto;padding:4px 10px">' + (sel.length === g.list.length ? '選択をすべて外す' : 'すべて選択') + '</button></div>' +
+      '<div class="mail-list">' + (g.list.length ? g.list.map(function (x) {
+        var on = !M.excluded[x.email.toLowerCase()];
+        return '<label class="mail-item"><input type="checkbox" class="mail-chk" data-email="' + esc(x.email.toLowerCase()) + '"' + (on ? ' checked' : '') + '>' +
+          '<span class="mail-who"><b>' + esc(x.names.join('・')) + '</b>' + (x.teams.length ? '<small>（' + esc(x.teams.join('・')) + '）</small>' : '') +
+          '<span class="mail-addr">' + esc(x.email) + '</span></span></label>';
+      }).join('') : '<div class="empty">該当する宛先がありません</div>') + '</div>' +
+      (missing || g.invalid.length ? '<div class="notice warn" style="margin-bottom:0">' +
+        (missing ? 'メールアドレスが空欄: ' + missing + '名' : '') + (missing && g.invalid.length ? ' / ' : '') +
+        (g.invalid.length ? '形式が正しくない: ' + g.invalid.map(function (r) { return esc(r.name) + '（' + esc(r.email) + '）'; }).join('、') : '') +
+        '<br><span class="small">これらの人には送信されません。「参加者」シートのメールアドレス列を確認してください。</span></div>' : '') + '</div>';
+
+    html += '<div class="section-title">件名・本文</div><div class="card">' +
+      '<div class="form-row"><label>件名</label><input id="mail-subject" value="' + esc(M.subject) + '" placeholder="例: 第2回グランDP杯のご案内" autocomplete="off"></div>' +
+      '<div class="form-row"><label>本文</label><textarea id="mail-body" class="rules-edit" rows="12" placeholder="例:\n{名前} 様\n\n第2回グランDP杯にお申し込みいただき、ありがとうございます。\n当日は 9:00 から受付を開始します。\n\nDP杯大会運営">' + esc(M.body) + '</textarea>' +
+      '<div class="hint">本文・件名の <b>{名前}</b> は、宛先の名前に置き換わります（同じアドレスの人が複数いる場合は「名前・名前」）。</div></div>' +
+      '<div class="row-actions" style="margin-top:0"><button class="btn ghost" data-act="mail-preview">👀 内容を確認</button></div></div>';
+
+    html += '<div class="section-title">テスト送信</div><div class="card"><div class="form-row"><label>テストの送信先</label>' +
+      '<input id="mail-testto" value="' + esc(M.testTo) + '" placeholder="自分のメールアドレス" inputmode="email" autocomplete="off"></div>' +
+      '<button class="btn" data-act="mail-test">📨 テスト送信する</button><div class="hint">件名の先頭に「[テスト]」が付きます。{名前} は一覧の最初の宛先の名前で送ります。</div></div>';
+
+    html += '<button class="result-link" data-act="mail-send"' + (sel.length ? '' : ' disabled style="opacity:.5"') + '>📧 選択した ' + sel.length + ' 件に送信する</button>';
+    html += '</div>';
+    app.innerHTML = html;
+  }
+
+  function mailPersonal(text, names) { return String(text || '').replace(/\{名前\}/g, names.join('・')); }
+
+  /** 分けて送る（MAIL_BATCH_MAX = 25 件まで。少し余裕をもって 20 件ずつ） */
+  function mailSendAll(groups, test) {
+    var M = S.mail, results = [], i = 0, size = 20;
+    var b = document.getElementById('busy');
+    var orig = b.innerHTML;
+    b.innerHTML = '<div style="text-align:center"><div class="spinner" style="margin:0 auto 10px"></div><div id="busy-text" style="font-weight:800"></div></div>';
+    b.hidden = false;
+    var step = function () {
+      if (i >= groups.length) return Promise.resolve();
+      var chunk = groups.slice(i, i + size);
+      document.getElementById('busy-text').textContent = '送信中… ' + Math.min(i + chunk.length, groups.length) + ' / ' + groups.length;
+      return call('adminSendMail', S.tid, S.adminPw, { subject: M.subject, body: M.body, test: !!test, to: chunk.map(function (x) { return { email: x.email, names: x.names }; }) }, clientMeta())
+        .then(function (r) { results = results.concat(r.results); i += size; return step(); });
+    };
+    return step().then(function () { b.hidden = true; b.innerHTML = orig; return results; }, function (e) { b.hidden = true; b.innerHTML = orig; e.partial = results; throw e; });
+  }
+
+  function mailResultBox(results, title) {
+    var ok = results.filter(function (r) { return r.ok; }), ng = results.filter(function (r) { return !r.ok; });
+    return alertBox(title, '<p>送信: <b>' + ok.length + '</b> 件' + (ng.length ? '　失敗: <b style="color:var(--danger)">' + ng.length + '</b> 件' : '') + '</p>' +
+      (ng.length ? '<ul class="list-plain">' + ng.map(function (r) { return '<li>' + esc(r.names) + '（' + esc(r.to) + '）: ' + esc(r.error) + '</li>'; }).join('') + '</ul>' : '') +
+      '<p class="small muted">送信の記録は「メール送信ログ」シートに残っています。</p>', ng.length ? '⚠️' : '✅');
   }
 
   /** ① トーナメント表を作って確認画面を開く（まだ作成しない） */
@@ -2048,6 +2208,53 @@
         }).catch(function () {});
         break;
       }
+      case 'mail-open':
+        S.mail = null;
+        go('mail', {});
+        break;
+      case 'mail-all': {
+        mailSync();
+        var gl = mailGroups().list, anyOff = gl.some(function (x) { return S.mail.excluded[x.email.toLowerCase()]; });
+        S.mail.excluded = {};
+        if (!anyOff) gl.forEach(function (x) { S.mail.excluded[x.email.toLowerCase()] = true; });
+        keepScroll(render);
+        break;
+      }
+      case 'mail-preview': {
+        mailSync();
+        var first = mailSelected()[0] || { names: ['（名前）'], email: '' };
+        modal({ title: '内容の確認', icon: '👀', html: '<div class="small muted">宛先の例: ' + esc(first.names.join('・')) + (first.email ? ' &lt;' + esc(first.email) + '&gt;' : '') + '</div>' +
+          '<div class="mail-preview"><b>' + esc(mailPersonal(S.mail.subject, first.names) || '（件名なし）') + '</b><hr>' + esc(mailPersonal(S.mail.body, first.names) || '（本文なし）').replace(/\n/g, '<br>') + '</div>',
+          buttons: [{ label: '閉じる', value: true, cls: 'primary' }] });
+        break;
+      }
+      case 'mail-test': {
+        mailSync();
+        var tto = String(S.mail.testTo || '').trim();
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(tto)) { alertBox('テストの送信先', '<p>テストの送信先のメールアドレスを入力してください。</p>'); break; }
+        if (!S.mail.subject.trim() || !S.mail.body.trim()) { alertBox('入力してください', '<p>件名と本文を入力してください。</p>'); break; }
+        var ex = mailSelected()[0];
+        mailSendAll([{ email: tto, names: ex ? ex.names : ['テスト'] }], true).then(function (res) { mailResultBox(res, 'テスト送信の結果'); }).catch(showError);
+        break;
+      }
+      case 'mail-send': {
+        mailSync();
+        var targets = mailSelected();
+        if (!targets.length) break;
+        if (!S.mail.subject.trim() || !S.mail.body.trim()) { alertBox('入力してください', '<p>件名と本文を入力してください。</p>'); break; }
+        modal({
+          title: targets.length + ' 件にメールを送信しますか？', icon: '📧',
+          html: '<p>件名: <b>' + esc(S.mail.subject) + '</b></p><p class="small muted">送信元: ' + esc(S.mail.info.fromName) + ' &lt;' + esc(S.mail.info.from) + '&gt;</p>' +
+            '<p class="small">送信したメールは取り消せません。先にテスト送信で内容を確認することをおすすめします。</p>',
+          buttons: [{ label: 'やめる', value: false, cls: 'ghost' }, { label: '送信する', value: true, cls: 'accent' }],
+          dismissable: false,
+        }).then(function (ok) {
+          if (!ok) return;
+          mailSendAll(targets, false).then(function (res) { mailResultBox(res, '送信が完了しました'); })
+            .catch(function (e) { showError(e); if (e.partial && e.partial.length) mailResultBox(e.partial, '途中まで送信しました'); });
+        });
+        break;
+      }
       case 'adm-rules-save':
         adminCall('adminSaveRules', document.getElementById('adm-rules').value).then(function (d) {
           S.admin = d; render(); toast('ルールを保存しました'); loadBoot(true).catch(function () {});
@@ -2106,6 +2313,17 @@
 
   document.addEventListener('input', function (ev) {
     var t = ev.target;
+    if (S.view === 'mail' && S.mail) {
+      if (t.id === 'mail-filter') { mailSync(); S.mail.filter = t.value; S.mail.excluded = {}; keepScroll(render); return; }
+      if (t.id === 'mail-nowd') { mailSync(); S.mail.noWd = t.checked; keepScroll(render); return; }
+      if (t.classList && t.classList.contains('mail-chk')) {
+        mailSync();
+        var em = t.getAttribute('data-email');
+        if (t.checked) delete S.mail.excluded[em]; else S.mail.excluded[em] = true;
+        keepScroll(render);
+        return;
+      }
+    }
     if (t.id === 'psearch' && S.participants) {
       S.psearch = t.value;
       document.getElementById('plist').innerHTML = participantsListHtml(S.participants, t.value.trim().toLowerCase());

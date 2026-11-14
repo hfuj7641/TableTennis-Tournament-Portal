@@ -18,7 +18,7 @@ const STATUS = {
 };
 
 /** 画面の下に表示するバージョン（デプロイが更新されているかの確認用） */
-const APP_VERSION = '4.7（棄権列をチェックボックスに）';
+const APP_VERSION = '4.8（参加者へのメール送信）';
 
 /** 1試合で記録できる最大セット数（7セットマッチまで対応） */
 const MAX_SETS = 7;
@@ -74,7 +74,7 @@ function authorize() {
   ScriptApp.getProjectTriggers();
   CacheService.getScriptCache().get('x');
   PropertiesService.getScriptProperties().getKeys();
-  if (false) SpreadsheetApp.create('authorize'); // スコープ検出用（実行はされない）
+  if (false) { SpreadsheetApp.create('authorize'); GmailApp.getAliases(); UrlFetchApp.fetch('https://example.com'); } // スコープ検出用（実行はされない）
   console.log('承認が完了しました。ウェブアプリとしてデプロイしてください。');
 }
 
