@@ -24,7 +24,8 @@ const SETTING_DEFS = [
   { key: 'entryCode', label: '選手入力パスコード', def: '', type: 'string', desc: '空欄なら不要。設定すると「選手用」に入るときに入力を求めます' },
 ];
 
-const PLAYER_HEADERS = ['名前', '所属', '学年', '参加確認', '支払確認', 'くじ番号', 'リーグ', '備考', '棄権'];
+// 「メールアドレス」は管理者用（Web には表示しない・送らない）
+const PLAYER_HEADERS = ['名前', '所属', '学年', '参加確認', '支払確認', 'くじ番号', 'リーグ', '備考', '棄権', 'メールアドレス'];
 const LEAGUE_HEADERS = ['リーグ', 'くじ番号', '名前', '所属'];
 const STANDING_HEADERS = ['リーグ', '順位', 'くじ番号', '名前', '所属', '試合数', '勝', '敗', '勝率', '獲得セット', '失セット', 'セット率', '得点', '失点', '進出先', '状態'];
 
@@ -84,6 +85,7 @@ function setupSheets_() {
   sh.getRange(2, pc.paid + 1, 500, 1).setDataValidation(rule);
   ensureWithdrawColumn_();
   ensureGradeColumn_();
+  ensureEmailColumn_(true);
 
   // リーグ（システムが書き込む）
   sh = ss.getSheetByName(SHEET.LEAGUES) || ss.insertSheet(SHEET.LEAGUES);
@@ -229,6 +231,7 @@ function playerColumns_(sh) {
     name: find(['名前', '氏名', '選手名']),
     team: find(['所属', 'チーム', 'クラブ']),
     grade: find(['学年']),
+    email: find(['メールアドレス', 'メアド', 'メール', 'Eメール', 'email', 'Email', 'E-mail']),
     attend: find(['参加確認', '参加']),
     paid: find(['支払確認', '支払', '支払い確認']),
     num: find(['くじ番号', '番号', 'くじ']),
@@ -305,6 +308,31 @@ function teamLabel_(team, grade) {
 }
 
 /** 「参加者」シートに「学年」列が無ければ追加する（列の位置は自由に移動してよい） */
+/**
+ * 「参加者」シートに「メールアドレス」列（管理者用）が無ければ追加する。
+ * メールアドレスの形式でない値には警告の印が出る（入力は可能）。
+ * この列の内容は Web 画面には一切表示しない（readPlayers_ でも読み込まない）。
+ */
+function ensureEmailColumn_(applyRule) {
+  const sh = sheet_(SHEET.PLAYERS);
+  const c = playerColumns_(sh);
+  let col = c.email + 1;
+  let added = false;
+  if (c.email < 0) {
+    col = Math.max(sh.getLastColumn(), 1) + 1;
+    sh.getRange(1, col).setValue('メールアドレス').setFontWeight('bold').setBackground('#fff4e5');
+    added = true;
+  }
+  try {
+    const rule = SpreadsheetApp.newDataValidation().requireTextIsEmail().setAllowInvalid(true)
+      .setHelpText('メールアドレスの形式で入力してください（管理者用。Webには表示されません）').build();
+    if (added || applyRule) sh.getRange(2, col, 500, 1).setDataValidation(rule);
+  } catch (err) {
+    // 入力規則が設定できなくても動作には影響しない
+  }
+  return added;
+}
+
 function ensureGradeColumn_() {
   const sh = sheet_(SHEET.PLAYERS);
   const c = playerColumns_(sh);
