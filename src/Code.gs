@@ -18,7 +18,7 @@ const STATUS = {
 };
 
 /** 画面の下に表示するバージョン（デプロイが更新されているかの確認用） */
-const APP_VERSION = '4.11（権限の承認のやり直しに対応）';
+const APP_VERSION = '4.12（権限の承認のやり直しを修正）';
 
 /** 1試合で記録できる最大セット数（7セットマッチまで対応） */
 const MAX_SETS = 7;
@@ -71,12 +71,9 @@ function doGet() {
  * 初回に Apps Script エディタから1回だけ実行して、権限（スプレッドシートの作成・編集、トリガー）を承認する。
  */
 function authorize() {
-  // 権限の確認画面で一部の項目（Gmail など）が許可されていない場合は、確認画面を出し直す
-  try {
-    ScriptApp.requireAllScopes(ScriptApp.AuthMode.FULL);
-  } catch (err) {
-    console.log('権限の確認: ' + err);
-  }
+  // 権限の確認画面で一部の項目（Gmail など）が許可されていない場合は、確認画面を出し直す。
+  // ※ ここで出るエラーをエディタが受け取って確認画面を表示するので、try/catch で囲まないこと
+  ScriptApp.requireAllScopes(ScriptApp.AuthMode.FULL);
   ScriptApp.getProjectTriggers();
   CacheService.getScriptCache().get('x');
   PropertiesService.getScriptProperties().getKeys();
